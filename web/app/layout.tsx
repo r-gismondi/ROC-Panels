@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Wall desk",
-  description: "Display power, brightness, and window layouts for the Samsung wall.",
+  title: "Operations floor",
+  description: "Wall control for the operations floor panels and window layouts.",
 };
 
 export default function RootLayout({
