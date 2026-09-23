@@ -1,0 +1,5 @@
+{
+  "network_prefix": "192.168.0",
+  "host_offset": 1,
+  "port": 1515
+}

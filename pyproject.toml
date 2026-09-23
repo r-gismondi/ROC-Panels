@@ -1,0 +1,9 @@
+[project]
+name = "samsung-controller"
+version = "1.0.0"
+description = "Read-only Samsung MDC probe for commercial displays."
+requires-python = ">=3.11"
+readme = "README.md"
+
+[tool.setuptools.packages.find]
+include = ["samsung_controller*"]
