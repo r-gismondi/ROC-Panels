@@ -20,7 +20,19 @@ Panel `N` (1-based) is `network_prefix.(host_offset + N):port`. With this config
 
 If `display_id` is omitted, the probe tries display ids 0, 1, and the panel number, and keeps the first id that answers. Set `"display_id"` to skip that search.
 
-## Run
+## Wall desk prototype
+
+The browser UI is a preview of display power, brightness, and window layouts. It does not send commands to the wall and does not move Windows.
+
+```bash
+cd web
+npm install
+npm run dev -- --port 43123
+```
+
+Open `http://127.0.0.1:43123`.
+
+## Probe
 
 From this directory:
 
