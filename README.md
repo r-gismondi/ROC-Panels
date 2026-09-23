@@ -32,6 +32,8 @@ npm run dev -- --hostname 0.0.0.0 --port 4721
 
 Open `http://127.0.0.1:4721`.
 
+`layouts/computer-102/` holds the window presets for computer 2 (`192.168.0.102`). The `Edge-*.bat` files open one Microsoft Edge window per section.
+
 ## Probe
 
 From this directory:

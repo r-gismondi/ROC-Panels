@@ -11,6 +11,19 @@ Display 1 must be the left monitor (HDMI 1) and display 2 the right monitor (HDM
 | `Dual-Focus-2.bat` | One window on HDMI 1 and one on HDMI 2 |
 | `Dual-Focus-3.bat` | Left column, a center block across both monitors, right column |
 | `Full.bat` | One window across both monitors |
-| `Close.bat` | Closes the test windows |
+| `Close.bat` | Closes the colored test windows |
 
-Press Esc in a test window to close that preset. TV13 and TV18 are on 192.168.0.103, so these files do not cover them.
+Press Esc in a colored test window to close that preset.
+
+Edge presets open one Microsoft Edge window in each of those same sections. Each window is a separate Edge profile, so an Edge window already open on this PC stays where it is. The toolbar sits inside the rectangle. `Edge-Close.bat` closes only the Edge windows these files opened.
+
+| File | Edge windows |
+|---|---|
+| `Edge-Independent.bat` | Eight windows, one per screen TV9–TV12 and TV14–TV17 |
+| `Edge-Dual-Focus-1.bat` | Three windows: HDMI 1, then two columns on HDMI 2 |
+| `Edge-Dual-Focus-2.bat` | One window on HDMI 1 and one on HDMI 2 |
+| `Edge-Dual-Focus-3.bat` | Left column, center block, right column |
+| `Edge-Full.bat` | One window across both monitors |
+| `Edge-Close.bat` | Closes the Edge test windows |
+
+TV13 and TV18 are on 192.168.0.103, so these files do not cover them.
