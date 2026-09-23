@@ -17,7 +17,7 @@ class PanelNetwork:
     def address_for(self, panel: int) -> tuple[str, int]:
         if panel < 1:
             raise ValueError(f"panel numbers start at 1, got {panel}")
-        last_octet = self.host_offset + panel - 1
+        last_octet = self.host_offset + panel
         if not 1 <= last_octet <= 254:
             raise ValueError(
                 f"panel {panel} would use host octet {last_octet}; "

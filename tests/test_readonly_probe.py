@@ -108,7 +108,8 @@ class ReadOnlyProbeTest(unittest.TestCase):
         self.assertEqual(network.network_prefix, "192.168.0")
         self.assertEqual(network.host_offset, 1)
         self.assertEqual(network.port, 1515)
-        self.assertEqual(network.address_for(1), ("192.168.0.1", 1515))
+        self.assertEqual(network.address_for(1), ("192.168.0.2", 1515))
+        self.assertEqual(network.address_for(2), ("192.168.0.3", 1515))
 
     def test_get_packets_have_empty_payload(self) -> None:
         for name, command in GET_COMMANDS.items():
@@ -127,7 +128,7 @@ class ReadOnlyProbeTest(unittest.TestCase):
                 json.dumps(
                     {
                         "network_prefix": "127.0.0",
-                        "host_offset": 1,
+                        "host_offset": 0,
                         "port": panel.port,
                     }
                 ),

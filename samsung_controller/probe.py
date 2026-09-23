@@ -104,7 +104,7 @@ def _print_reports(network: PanelNetwork, reports: list[dict], config_path: str)
     print(f"config: {config_path}")
     print(
         "addressing: "
-        f"{network.network_prefix}.(host_offset + panel - 1), "
+        f"{network.network_prefix}.(host_offset + panel), "
         f"host_offset {network.host_offset}, port {network.port}"
     )
     print("writes: none (power, backlight, input, and wall layout are not sent)")

@@ -16,7 +16,7 @@ The probe sends get requests only. Every packet has a data length of zero. It do
 }
 ```
 
-Panel `N` (1-based) is `network_prefix.(host_offset + N - 1):port`. Panel 1 is `192.168.0.1:1515`.
+Panel `N` (1-based) is `network_prefix.(host_offset + N):port`. With this config, panel 1 is `192.168.0.2:1515` and panel 2 is `192.168.0.3:1515`.
 
 If `display_id` is omitted, the probe tries display ids 0, 1, and the panel number, and keeps the first id that answers. Set `"display_id"` to skip that search.
 
