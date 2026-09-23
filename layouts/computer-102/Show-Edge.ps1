@@ -63,7 +63,14 @@ function Stop-RecordedEdge([string]$PidFile) {
         if ($oldId -le 0) {
             continue
         }
-        & taskkill.exe /PID $oldId /T /F 2>$null | Out-Null
+        $alive = Get-Process -Id $oldId -ErrorAction SilentlyContinue
+        if (-not $alive) {
+            continue
+        }
+        try {
+            & taskkill.exe /PID $oldId /T /F 2>&1 | Out-Null
+        } catch {
+        }
     }
     Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
 }
