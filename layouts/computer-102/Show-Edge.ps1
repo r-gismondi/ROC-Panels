@@ -1,6 +1,6 @@
 # Opens one Microsoft Edge window per section on computer 192.168.0.102.
-# Each window uses its own profile so an Edge already open on this PC is left alone.
-# Outer window bounds match the colored layout test.
+# Edge ignores size on its own and stacks new windows on the left monitor.
+# This script forces each window onto the same rectangles as the colored test.
 
 param(
     [Parameter(Mandatory = $true)]
@@ -9,6 +9,32 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not ("PanelWin" -as [type])) {
+    Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public struct PanelRect {
+    public int Left;
+    public int Top;
+    public int Right;
+    public int Bottom;
+}
+public static class PanelWin {
+    [DllImport("user32.dll")]
+    public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")]
+    public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+    [DllImport("user32.dll")]
+    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")]
+    public static extern bool GetWindowRect(IntPtr hWnd, out PanelRect lpRect);
+}
+"@
+}
+[void][PanelWin]::SetProcessDPIAware()
 
 function Find-Edge {
     $candidates = @(
@@ -23,95 +49,71 @@ function Find-Edge {
     return $null
 }
 
-if (-not ("PanelWin" -as [type])) {
-    Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public struct PanelRect {
-    public int Left;
-    public int Top;
-    public int Right;
-    public int Bottom;
-}
-public static class PanelWin {
-    [DllImport("user32.dll")]
-    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-    [DllImport("user32.dll")]
-    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-    [DllImport("user32.dll")]
-    public static extern bool GetWindowRect(IntPtr hWnd, out PanelRect lpRect);
-    [DllImport("dwmapi.dll")]
-    public static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out PanelRect pvAttribute, int cbAttribute);
-}
-"@
-}
-
 function Write-Utf8NoBom([string]$Path, [string]$Text) {
     $utf8 = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllText($Path, $Text, $utf8)
 }
 
-function Stop-RecordedEdge([string]$PidFile) {
-    if (-not (Test-Path -LiteralPath $PidFile)) {
+function Stop-LayoutEdge([string]$Root) {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $procs = Get-CimInstance Win32_Process -Filter "Name = 'msedge.exe'" -ErrorAction SilentlyContinue
+        foreach ($proc in @($procs)) {
+            if ($proc.CommandLine -and $proc.CommandLine -like "*$Root\edge-profiles*") {
+                & cmd.exe /c "taskkill /PID $($proc.ProcessId) /T /F >nul 2>&1" | Out-Null
+            }
+        }
+    } catch {
+    }
+    $ErrorActionPreference = $previous
+}
+
+function Get-EdgeWindow([string]$Title) {
+    return Get-Process -Name msedge -ErrorAction SilentlyContinue |
+        Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like "$Title*" } |
+        Select-Object -First 1
+}
+
+function Move-EdgeWindow([IntPtr]$Hwnd, [int]$X, [int]$Y, [int]$W, [int]$H) {
+    if ($Hwnd -eq [IntPtr]::Zero) {
         return
     }
-    foreach ($line in @(Get-Content -LiteralPath $PidFile -ErrorAction SilentlyContinue)) {
-        $oldId = 0
-        if (-not [int]::TryParse([string]$line.Trim(), [ref]$oldId)) {
-            continue
-        }
-        if ($oldId -le 0) {
-            continue
-        }
-        $alive = Get-Process -Id $oldId -ErrorAction SilentlyContinue
-        if (-not $alive) {
-            continue
-        }
-        try {
-            & taskkill.exe /PID $oldId /T /F 2>&1 | Out-Null
-        } catch {
-        }
-    }
-    Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
-}
-
-function Set-ExactBounds([IntPtr]$Hwnd, [int]$X, [int]$Y, [int]$W, [int]$H) {
     [void][PanelWin]::ShowWindow($Hwnd, 9)
+    [void][PanelWin]::MoveWindow($Hwnd, $X, $Y, $W, $H, $true)
     [void][PanelWin]::SetWindowPos($Hwnd, [IntPtr]::Zero, $X, $Y, $W, $H, 0x0044)
-    Start-Sleep -Milliseconds 200
-    $window = New-Object PanelRect
-    $visible = New-Object PanelRect
-    $gotWindow = [PanelWin]::GetWindowRect($Hwnd, [ref]$window)
-    $hr = [PanelWin]::DwmGetWindowAttribute($Hwnd, 9, [ref]$visible, 16)
-    if ($gotWindow -and $hr -eq 0) {
-        $padL = $visible.Left - $window.Left
-        $padT = $visible.Top - $window.Top
-        $padR = $window.Right - $visible.Right
-        $padB = $window.Bottom - $visible.Bottom
-        [void][PanelWin]::SetWindowPos(
-            $Hwnd,
-            [IntPtr]::Zero,
-            ($X - $padL),
-            ($Y - $padT),
-            ($W + $padL + $padR),
-            ($H + $padT + $padB),
-            0x0044
-        )
+}
+
+function Get-EdgeRectText([IntPtr]$Hwnd) {
+    try {
+        $rect = New-Object PanelRect
+        $ok = [PanelWin]::GetWindowRect($Hwnd, [ref]$rect)
+        if (-not $ok) {
+            return "position unread"
+        }
+        $width = $rect.Right - $rect.Left
+        $height = $rect.Bottom - $rect.Top
+        return "$($rect.Left),$($rect.Top) ${width}x${height}"
+    } catch {
+        return "position unread"
     }
 }
 
-function Wait-EdgeWindow([string]$Title, [int]$Seconds) {
+function Hold-EdgeWindow($Process, [string]$Title, [int]$X, [int]$Y, [int]$W, [int]$H, [int]$Seconds) {
     $deadline = (Get-Date).AddSeconds($Seconds)
     while ((Get-Date) -lt $deadline) {
-        $hit = Get-Process -Name msedge -ErrorAction SilentlyContinue |
-            Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like "$Title*" } |
-            Select-Object -First 1
+        $hit = Get-EdgeWindow $Title
         if ($hit) {
-            return $hit
+            $Process = $hit
+        } elseif ($Process) {
+            $Process.Refresh()
         }
-        Start-Sleep -Milliseconds 250
+        if ($Process -and $Process.MainWindowHandle -ne [IntPtr]::Zero) {
+            Move-EdgeWindow $Process.MainWindowHandle $X $Y $W $H
+        }
+        Start-Sleep -Milliseconds 300
     }
-    return $null
+    return $Process
 }
 
 $edge = Find-Edge
@@ -131,9 +133,8 @@ if (Test-Path -LiteralPath $layoutPid) {
     Remove-Item -LiteralPath $layoutPid -Force -ErrorAction SilentlyContinue
 }
 
-$pidFile = Join-Path $root "edge-layout.pids"
-Stop-RecordedEdge $pidFile
-Start-Sleep -Milliseconds 400
+Stop-LayoutEdge $root
+Start-Sleep -Milliseconds 600
 
 $profileRoot = Join-Path $root "edge-profiles"
 for ($try = 0; $try -lt 5; $try++) {
@@ -147,6 +148,10 @@ for ($try = 0; $try -lt 5; $try++) {
 }
 $pageRoot = Join-Path $root "pages"
 New-Item -ItemType Directory -Force -Path $pageRoot | Out-Null
+$pidFile = Join-Path $root "edge-layout.pids"
+if (Test-Path -LiteralPath $pidFile) {
+    Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+}
 
 function Zone($title, $x, $y, $w, $h, $color) {
     [pscustomobject]@{ Title = $title; X = $x; Y = $y; W = $w; H = $h; Color = $color }
@@ -182,8 +187,8 @@ $presets = @{
     )
 }
 
+$placed = @()
 $index = 0
-$opened = 0
 foreach ($zone in $presets[$Preset]) {
     $index += 1
     $single = ($zone.Title -replace "`r?`n", " / ")
@@ -219,12 +224,16 @@ foreach ($zone in $presets[$Preset]) {
     $defaultDir = Join-Path $profile "Default"
     New-Item -ItemType Directory -Force -Path $defaultDir | Out-Null
     Write-Utf8NoBom (Join-Path $profile "First Run") ""
-    $prefs = '{"browser":{"has_seen_welcome_page":true},"distribution":{"skip_first_run_ui":true},"profile":{"exit_type":"Normal"},"session":{"restore_on_startup":5}}'
+    $right = $zone.X + $zone.W
+    $bottom = $zone.Y + $zone.H
+    $prefs = @"
+{"browser":{"has_seen_welcome_page":true,"window_placement":{"maximized":false,"left":$($zone.X),"top":$($zone.Y),"right":$right,"bottom":$bottom,"work_area_left":0,"work_area_top":0,"work_area_right":3840,"work_area_bottom":1080}},"distribution":{"skip_first_run_ui":true},"profile":{"exit_type":"Normal"},"session":{"restore_on_startup":5}}
+"@
     Write-Utf8NoBom (Join-Path $defaultDir "Preferences") $prefs
 
     $uri = ([Uri]$htmlPath).AbsoluteUri
-    Write-Output "Opening $single at $($zone.X),$($zone.Y) $($zone.W)x$($zone.H)"
-    $argLine = "--user-data-dir=`"$profile`" --no-first-run --disable-fre --no-default-browser-check --disable-sync --disable-extensions --hide-crash-restore-bubble --disable-session-crashed-bubble --new-window --window-position=$($zone.X),$($zone.Y) --window-size=$($zone.W),$($zone.H) `"$uri`""
+    Write-Output "Opening $single"
+    $argLine = "--user-data-dir=`"$profile`" --no-first-run --disable-fre --no-default-browser-check --disable-sync --disable-extensions --hide-crash-restore-bubble --disable-session-crashed-bubble --disable-features=msEdgeStartupBoost --new-window --window-position=$($zone.X),$($zone.Y) --window-size=$($zone.W),$($zone.H) `"$uri`""
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
     $startInfo.Arguments = $argLine
@@ -234,7 +243,14 @@ foreach ($zone in $presets[$Preset]) {
     [void]$started.Start()
     Add-Content -Path $pidFile -Value $started.Id -Encoding Ascii
 
-    $windowProcess = Wait-EdgeWindow $htmlTitle 20
+    $windowProcess = $null
+    $seen = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $seen -and -not $windowProcess) {
+        $windowProcess = Get-EdgeWindow $htmlTitle
+        if (-not $windowProcess) {
+            Start-Sleep -Milliseconds 250
+        }
+    }
     if (-not $windowProcess) {
         $started.Refresh()
         if ($started.MainWindowHandle -ne [IntPtr]::Zero) {
@@ -246,19 +262,30 @@ foreach ($zone in $presets[$Preset]) {
         continue
     }
     Add-Content -Path $pidFile -Value $windowProcess.Id -Encoding Ascii
-    for ($attempt = 0; $attempt -lt 4; $attempt++) {
-        $windowProcess.Refresh()
-        if ($windowProcess.MainWindowHandle -ne [IntPtr]::Zero) {
-            Set-ExactBounds $windowProcess.MainWindowHandle $zone.X $zone.Y $zone.W $zone.H
-        }
-        Start-Sleep -Milliseconds 350
-    }
-    Write-Output "Placed $single"
-    $opened += 1
+    $windowProcess = Hold-EdgeWindow $windowProcess $htmlTitle $zone.X $zone.Y $zone.W $zone.H 4
+    $actual = Get-EdgeRectText $windowProcess.MainWindowHandle
+    Write-Output "Placed $single at $actual"
+    $placed += $windowProcess
 }
 
-Write-Output "Opened $opened Edge window(s). Edge-Close.bat closes only these test windows."
-if ($opened -eq 0) {
+if ($placed.Count -eq 0) {
+    Write-Output "Opened 0 Edge windows."
     exit 1
 }
+
+Write-Output "Holding the windows in place"
+$holdUntil = (Get-Date).AddSeconds(4)
+$zones = @($presets[$Preset])
+while ((Get-Date) -lt $holdUntil) {
+    for ($i = 0; $i -lt $zones.Count; $i++) {
+        $single = ($zones[$i].Title -replace "`r?`n", " / ")
+        $hit = Get-EdgeWindow "$single Edge"
+        if ($hit) {
+            Move-EdgeWindow $hit.MainWindowHandle $zones[$i].X $zones[$i].Y $zones[$i].W $zones[$i].H
+        }
+    }
+    Start-Sleep -Milliseconds 300
+}
+
+Write-Output "Opened $($placed.Count) Edge window(s). Edge-Close.bat closes only these test windows."
 exit 0
