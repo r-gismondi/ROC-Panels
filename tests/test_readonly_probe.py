@@ -38,6 +38,8 @@ class FakePanel(threading.Thread):
                 conn, _addr = self.server.accept()
             except TimeoutError:
                 continue
+            except OSError:
+                return
             with conn:
                 conn.settimeout(1.0)
                 self._handle(conn)
