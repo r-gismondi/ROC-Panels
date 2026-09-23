@@ -111,6 +111,18 @@ class ReadOnlyProbeTest(unittest.TestCase):
         self.assertEqual(network.address_for(1), ("192.168.0.2", 1515))
         self.assertEqual(network.address_for(2), ("192.168.0.3", 1515))
 
+    def test_config_accepts_utf8_bom(self) -> None:
+        path = Path("config") / "panels.bom.json"
+        try:
+            path.write_bytes(
+                b"\xef\xbb\xbf"
+                + b'{"network_prefix":"192.168.0","host_offset":1,"port":1515}\n'
+            )
+            network = load_config(path)
+            self.assertEqual(network.address_for(1), ("192.168.0.2", 1515))
+        finally:
+            path.unlink(missing_ok=True)
+
     def test_get_packets_have_empty_payload(self) -> None:
         for name, command in GET_COMMANDS.items():
             packet = build_get_packet(command, 0)

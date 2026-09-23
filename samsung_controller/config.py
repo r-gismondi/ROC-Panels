@@ -28,7 +28,7 @@ class PanelNetwork:
 
 def load_config(path: Path) -> PanelNetwork:
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
     except FileNotFoundError as exc:
         raise SystemExit(f"config not found: {path}") from exc
     except json.JSONDecodeError as exc:
