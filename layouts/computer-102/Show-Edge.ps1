@@ -183,7 +183,7 @@ foreach ($zone in $presets[$Preset]) {
 if ($opened.Count -eq 0) { Write-Output "Opened 0 windows."; exit 1 }
 
 Start-Sleep -Seconds 2
-foreach ($item in $opened) {
+foreach ($item in ($opened | Sort-Object Y -Descending)) {
     $again = Find-ProfileWindow $item.Profile
     if ($again) {
         [void][PanelWin]::Place($again.MainWindowHandle, $item.X, $item.Y, $item.W, $item.H)
