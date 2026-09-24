@@ -138,6 +138,23 @@ function Get-EdgeWindow([string]$Title) {
         Select-Object -First 1
 }
 
+function Wait-ProfileWindow([string]$Profile, [int]$Seconds) {
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $deadline) {
+        $procs = Get-CimInstance Win32_Process -Filter "Name = 'msedge.exe'" -ErrorAction SilentlyContinue
+        foreach ($proc in @($procs)) {
+            if ($proc.CommandLine -and $proc.CommandLine -like "*$Profile*") {
+                $live = Get-Process -Id $proc.ProcessId -ErrorAction SilentlyContinue
+                if ($live -and $live.MainWindowHandle -ne 0) {
+                    return $live
+                }
+            }
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    return $null
+}
+
 function Move-EdgeWindow([IntPtr]$Hwnd, [int]$X, [int]$Y, [int]$W, [int]$H) {
     if ($Hwnd -eq [IntPtr]::Zero) {
         return
@@ -167,10 +184,11 @@ function Get-EdgeRectText([IntPtr]$Hwnd) {
 function Hold-EdgeWindow($Process, [string]$Title, [int]$X, [int]$Y, [int]$W, [int]$H, [int]$Seconds) {
     $deadline = (Get-Date).AddSeconds($Seconds)
     while ((Get-Date) -lt $deadline) {
-        $hit = Get-EdgeWindow $Title
-        if ($hit) {
-            $Process = $hit
-        } elseif ($Process) {
+        if ($Title) {
+            $hit = Get-EdgeWindow $Title
+            if ($hit) { $Process = $hit }
+        }
+        if ($Process) {
             $Process.Refresh()
         }
         if ($Process -and $Process.MainWindowHandle -ne [IntPtr]::Zero) {
@@ -257,34 +275,6 @@ $index = 0
 foreach ($zone in $presets[$Preset]) {
     $index += 1
     $single = ($zone.Title -replace "`r?`n", " / ")
-    $htmlTitle = "$single Edge"
-    $heading = ($zone.Title -replace "`r?`n", "<br>")
-    $htmlPath = Join-Path $pageRoot ("{0}-{1}.html" -f $Preset, $index)
-    $html = @"
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>$htmlTitle</title>
-<style>
-  html, body { margin: 0; height: 100%; background: $($zone.Color); color: #fff; font-family: "Segoe UI", sans-serif; }
-  body { display: flex; align-items: center; justify-content: center; text-align: center; }
-  h1 { font-size: 56px; line-height: 1.1; margin: 0 0 12px; }
-  p { font-size: 28px; margin: 6px 0; }
-</style>
-</head>
-<body>
-  <div>
-    <h1>$heading</h1>
-    <p>Microsoft Edge</p>
-    <p>$($zone.X), $($zone.Y)</p>
-    <p>$($zone.W) x $($zone.H)</p>
-  </div>
-</body>
-</html>
-"@
-    Write-Utf8NoBom $htmlPath $html
-
     $profile = Join-Path $profileRoot ("{0}-{1}" -f $Preset, $index)
     $defaultDir = Join-Path $profile "Default"
     New-Item -ItemType Directory -Force -Path $defaultDir | Out-Null
@@ -292,11 +282,11 @@ foreach ($zone in $presets[$Preset]) {
     $right = $zone.X + $zone.W
     $bottom = $zone.Y + $zone.H
     $prefs = @"
-{"browser":{"has_seen_welcome_page":true,"window_placement":{"maximized":false,"left":$($zone.X),"top":$($zone.Y),"right":$right,"bottom":$bottom,"work_area_left":0,"work_area_top":0,"work_area_right":3840,"work_area_bottom":1080}},"distribution":{"skip_first_run_ui":true},"profile":{"exit_type":"Normal"},"session":{"restore_on_startup":5}}
+{"browser":{"has_seen_welcome_page":true},"homepage":"https://ccv2.mtllc.us/landing","homepage_is_newtabpage":false,"session":{"restore_on_startup":4,"startup_urls":["https://ccv2.mtllc.us/landing"]},"distribution":{"skip_first_run_ui":true},"profile":{"exit_type":"Normal"}}
 "@
     Write-Utf8NoBom (Join-Path $defaultDir "Preferences") $prefs
 
-    $uri = ([Uri]$htmlPath).AbsoluteUri
+    $uri = "https://ccv2.mtllc.us/landing"
     Write-Output "Opening $single"
     $argLine = "--user-data-dir=`"$profile`" --no-first-run --disable-fre --no-default-browser-check --disable-sync --disable-extensions --hide-crash-restore-bubble --disable-session-crashed-bubble --disable-features=msEdgeStartupBoost --window-position=$($zone.X),$($zone.Y) --window-size=$($zone.W),$($zone.H) --app=`"$uri`""
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -308,14 +298,7 @@ foreach ($zone in $presets[$Preset]) {
     [void]$started.Start()
     Add-Content -Path $pidFile -Value $started.Id -Encoding Ascii
 
-    $windowProcess = $null
-    $seen = (Get-Date).AddSeconds(20)
-    while ((Get-Date) -lt $seen -and -not $windowProcess) {
-        $windowProcess = Get-EdgeWindow $htmlTitle
-        if (-not $windowProcess) {
-            Start-Sleep -Milliseconds 250
-        }
-    }
+    $windowProcess = Wait-ProfileWindow $profile 25
     if (-not $windowProcess) {
         $started.Refresh()
         if ($started.MainWindowHandle -ne [IntPtr]::Zero) {
@@ -327,7 +310,7 @@ foreach ($zone in $presets[$Preset]) {
         continue
     }
     Add-Content -Path $pidFile -Value $windowProcess.Id -Encoding Ascii
-    $windowProcess = Hold-EdgeWindow $windowProcess $htmlTitle $zone.X $zone.Y $zone.W $zone.H 1
+    $windowProcess = Hold-EdgeWindow $windowProcess "" $zone.X $zone.Y $zone.W $zone.H 1
     $actual = Get-EdgeRectText $windowProcess.MainWindowHandle
     Write-Output "Placed $single at $actual"
     $placed += $windowProcess.MainWindowHandle
