@@ -92,7 +92,7 @@ public static class PanelWin {
         GetWindowRect(child, out window);
         int bar = origin.Y - window.Top;
         if (bar < 8) bar = 33;
-        MoveWindow(child, 0, -bar, width, height + bar, true);
+        MoveWindow(child, -8, -bar - 8, width + 16, height + bar + 16, true);
     }
 }
 "@
@@ -347,7 +347,11 @@ for ($i = 0; $i -lt $zones.Count; $i++) {
     $form = New-Object System.Windows.Forms.Form
     $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
     $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
-    $form.Bounds = New-Object System.Drawing.Rectangle $zone.X, $zone.Y, $zone.W, $zone.H
+    $drawW = $zone.W
+    $drawH = $zone.H
+    if (($zone.X + $zone.W) -lt 3840) { $drawW += 8 }
+    if (($zone.Y + $zone.H) -lt 1080) { $drawH += 8 }
+    $form.Bounds = New-Object System.Drawing.Rectangle $zone.X, $zone.Y, $drawW, $drawH
     $form.BackColor = [System.Drawing.ColorTranslator]::FromHtml($zone.Color)
     $form.TopMost = $true
     $form.ShowInTaskbar = $false
@@ -368,7 +372,7 @@ function Update-Clips {
         if ($i -ge $script:placed.Count) { continue }
         $hwnd = $script:placed[$i]
         if ($hwnd -ne [IntPtr]::Zero -and $script:hosts[$i].IsHandleCreated) {
-            [void][PanelWin]::ClipInto($hwnd, $script:hosts[$i].Handle, $script:zones[$i].W, $script:zones[$i].H)
+            [void][PanelWin]::ClipInto($hwnd, $script:hosts[$i].Handle, $script:hosts[$i].ClientSize.Width, $script:hosts[$i].ClientSize.Height)
         }
     }
 }
