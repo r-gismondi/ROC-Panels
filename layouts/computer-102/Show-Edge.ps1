@@ -362,10 +362,11 @@ for ($i = 0; $i -lt $zones.Count; $i++) {
 }
 
 $script:zones = $zones
+$script:placed = $placed
 function Update-Clips {
     for ($i = 0; $i -lt $script:zones.Count; $i++) {
-        if ($i -ge $placed.Count) { continue }
-        $hwnd = $placed[$i]
+        if ($i -ge $script:placed.Count) { continue }
+        $hwnd = $script:placed[$i]
         if ($hwnd -ne [IntPtr]::Zero -and $script:hosts[$i].IsHandleCreated) {
             [void][PanelWin]::ClipInto($hwnd, $script:hosts[$i].Handle, $script:zones[$i].W, $script:zones[$i].H)
         }
@@ -373,12 +374,7 @@ function Update-Clips {
 }
 
 Update-Clips
-$timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 400
-$timer.Add_Tick({ Update-Clips })
-$timer.Start()
 Add-Content -Path $pidFile -Value $PID -Encoding Ascii
 Write-Output "Opened $($placed.Count) pages with no bars. Press Esc or run Edge-Close.bat."
 [System.Windows.Forms.Application]::Run()
-$timer.Stop()
 Stop-LayoutEdge $root
