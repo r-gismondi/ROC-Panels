@@ -21,6 +21,8 @@ public static class PanelWin {
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr child, string cls, string title);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out PanelRect lpRect);
     [StructLayout(LayoutKind.Sequential)]
     public struct PanelPlacement {
@@ -174,7 +176,7 @@ public static class PanelWin {
             if (right < 0) right = 0;
             if (bottom < 0) bottom = 0;
         }
-        if (top < 80) top = 112;
+        if (top > 8) top = 8;
         int hostW = w + left + right;
         int hostH = h + top + bottom;
         SetWindowPos(host, new IntPtr(-2), x - left, y - top, hostW, hostH, 0x0020 | 0x0040);
@@ -272,9 +274,16 @@ function Stop-HostProcess([string]$Path) {
     }
     Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
 }
+function Set-Taskbar([bool]$Visible) {
+    foreach ($name in @("Shell_TrayWnd", "Shell_SecondaryTrayWnd")) {
+        $tray = [PanelWin]::FindWindow($name, $null)
+        if ($tray -ne [IntPtr]::Zero) { [void][PanelWin]::ShowWindow($tray, $(if ($Visible) { 5 } else { 0 })) }
+    }
+}
 if ($Close) {
     Close-RecordedWindows $hwndFile
     Stop-HostProcess $hostPidFile
+    Set-Taskbar $true
     exit 0
 }
 Stop-HostProcess $hostPidFile
@@ -285,7 +294,9 @@ if (-not $edge) { Write-Error "Microsoft Edge was not found."; exit 1 }
 
 Stop-LayoutEdge $root
 Close-RecordedWindows $hwndFile
-Start-Sleep -Milliseconds 400
+Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 800
+Set-Taskbar $false
 
 function Zone($title, $x, $y, $w, $h) {
     [pscustomobject]@{ Title = $title; X = $x; Y = $y; W = $w; H = $h }
@@ -312,7 +323,7 @@ foreach ($zone in $presets[$Preset]) {
     Write-Output "Opening $($zone.Title)"
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
-    $startInfo.Arguments = "--new-window `"$HomeUrl`""
+    $startInfo.Arguments = "--app=`"$HomeUrl`" --new-window"
     $startInfo.UseShellExecute = $true
     $started = New-Object System.Diagnostics.Process
     $started.StartInfo = $startInfo
