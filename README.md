@@ -32,7 +32,7 @@ npm run dev -- --hostname 0.0.0.0 --port 4721
 
 Open `http://127.0.0.1:4721`.
 
-`layouts/computer-102/` holds the window presets for computer 2 (`192.168.0.102`). The `Edge-*.bat` files open one Microsoft Edge window per section.
+`layouts/computer-102/` holds the window presets for computer 2 (`192.168.0.102`). They match computer 1: Independent, Split, Focus, Focus split, and Full, on TV9–TV12 and TV14–TV17. `layouts/computer-103/` holds computer 3 (`192.168.0.103`): Independent puts one page on TV13 and one on TV18, and Full covers both monitors. The `Edge-*.bat` files open those pages in Microsoft Edge.
 
 ## Probe
 

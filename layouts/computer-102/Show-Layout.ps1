@@ -12,7 +12,7 @@
 
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Independent", "DualFocus1", "DualFocus2", "DualFocus3", "Full")]
+    [ValidateSet("Independent", "Split", "Focus", "FocusSplit", "Full")]
     [string]$Preset
 )
 
@@ -58,19 +58,21 @@ $presets = @{
         (Zone "TV16" 1920 540 960  540 "#ff6b8a")
         (Zone "TV17" 2880 540 960  540 "#9be36a")
     )
-    DualFocus1 = @(
-        (Zone "TV9  TV10`nTV14 TV15" 0    0 1920 1080 "#1a6cff")
-        (Zone "TV11`nTV16"           1920 0 960  1080 "#f0a202")
-        (Zone "TV12`nTV17"           2880 0 960  1080 "#12c2a3")
-    )
-    DualFocus2 = @(
+    Split = @(
         (Zone "TV9  TV10`nTV14 TV15" 0    0 1920 1080 "#1a6cff")
         (Zone "TV11 TV12`nTV16 TV17" 1920 0 1920 1080 "#f0a202")
     )
-    DualFocus3 = @(
+    Focus = @(
         (Zone "TV9`nTV14"            0    0 960  1080 "#1a6cff")
         (Zone "TV10 TV11`nTV15 TV16" 960  0 1920 1080 "#f0a202")
         (Zone "TV12`nTV17"           2880 0 960  1080 "#12c2a3")
+    )
+    FocusSplit = @(
+        (Zone "TV9"                  0    0 960  540  "#1a6cff")
+        (Zone "TV14"                 0    540 960 540  "#7a5cff")
+        (Zone "TV10 TV11`nTV15 TV16" 960  0 1920 1080 "#f0a202")
+        (Zone "TV12"                 2880 0 960  540  "#12c2a3")
+        (Zone "TV17"                 2880 540 960 540  "#9be36a")
     )
     Full = @(
         (Zone "TV9 TV10 TV11 TV12`nTV14 TV15 TV16 TV17" 0 0 3840 1080 "#1a6cff")

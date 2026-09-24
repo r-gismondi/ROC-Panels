@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { Slider } from "@/components/ui/slider"
 
-type PanelId = 1 | 2
+type PanelId = 1 | 2 | 3
 
 type Screen = { id: string; hdmi: string }
 
@@ -34,15 +34,18 @@ const PANEL_2: Screen[][] = [
     { id: "TV10", hdmi: "HDMI 1" },
     { id: "TV11", hdmi: "HDMI 2" },
     { id: "TV12", hdmi: "HDMI 2" },
-    { id: "TV13", hdmi: "C3 HDMI 1" },
   ],
   [
     { id: "TV14", hdmi: "HDMI 1" },
     { id: "TV15", hdmi: "HDMI 1" },
     { id: "TV16", hdmi: "HDMI 2" },
     { id: "TV17", hdmi: "HDMI 2" },
-    { id: "TV18", hdmi: "C3 HDMI 2" },
   ],
+]
+
+const PANEL_3: Screen[][] = [
+  [{ id: "TV13", hdmi: "HDMI 1" }],
+  [{ id: "TV18", hdmi: "HDMI 2" }],
 ]
 
 function groups(ids: string[], buckets: string[][]): Record<string, number> {
@@ -57,9 +60,10 @@ function groups(ids: string[], buckets: string[][]): Record<string, number> {
 const IDS: Record<PanelId, string[]> = {
   1: PANEL_1.flat().map((screen) => screen.id),
   2: PANEL_2.flat().map((screen) => screen.id),
+  3: PANEL_3.flat().map((screen) => screen.id),
 }
 
-const SCREENS = [...PANEL_1.flat(), ...PANEL_2.flat()]
+const SCREENS = [...PANEL_1.flat(), ...PANEL_2.flat(), ...PANEL_3.flat()]
 
 function initialPower() {
   return Object.fromEntries(SCREENS.map((screen) => [screen.id, true]))
@@ -83,40 +87,24 @@ const PRESETS: Record<PanelId, Preset[]> = {
   ],
   2: [
     { id: "independent", name: "Independent", groups: groups(IDS[2], IDS[2].map((id) => [id])) },
+    { id: "split", name: "Split", groups: groups(IDS[2], [["TV9", "TV10", "TV14", "TV15"], ["TV11", "TV12", "TV16", "TV17"]]) },
+    { id: "focus", name: "Focus", groups: groups(IDS[2], [["TV9", "TV14"], ["TV10", "TV11", "TV15", "TV16"], ["TV12", "TV17"]]) },
     {
-      id: "dual-1",
-      name: "Dual focus 1",
-      groups: groups(IDS[2], [
-        ["TV9", "TV10", "TV14", "TV15"],
-        ["TV11", "TV16"],
-        ["TV12", "TV13", "TV17", "TV18"],
-      ]),
-    },
-    {
-      id: "dual-2",
-      name: "Dual focus 2",
-      groups: groups(IDS[2], [
-        ["TV9", "TV10", "TV14", "TV15"],
-        ["TV11", "TV12", "TV16", "TV17"],
-        ["TV13", "TV18"],
-      ]),
-    },
-    {
-      id: "dual-3",
-      name: "Dual focus 3",
-      groups: groups(IDS[2], [
-        ["TV9", "TV14"],
-        ["TV10", "TV11", "TV15", "TV16"],
-        ["TV12", "TV13", "TV17", "TV18"],
-      ]),
+      id: "focus-split",
+      name: "Focus split",
+      groups: groups(IDS[2], [["TV9"], ["TV14"], ["TV10", "TV11", "TV15", "TV16"], ["TV12"], ["TV17"]]),
     },
     { id: "full", name: "Full", groups: groups(IDS[2], [IDS[2]]) },
+  ],
+  3: [
+    { id: "independent", name: "Independent", groups: groups(IDS[3], [["TV13"], ["TV18"]]) },
+    { id: "full", name: "Full", groups: groups(IDS[3], [IDS[3]]) },
   ],
 }
 
 export function WallConsole() {
   const [selection, setSelection] = useState<Selection>({ panel: 1, screen: "all" })
-  const [preset, setPreset] = useState<Record<PanelId, string>>({ 1: "focus", 2: "dual-2" })
+  const [preset, setPreset] = useState<Record<PanelId, string>>({ 1: "focus", 2: "focus", 3: "independent" })
   const [power, setPower] = useState<Record<string, boolean>>(initialPower)
   const [brightness, setBrightness] = useState<Record<string, number>>(initialBrightness)
 
@@ -177,54 +165,67 @@ export function WallConsole() {
           onSelect={setSelection}
         />
 
-        <div className="flex flex-col justify-center gap-4 rounded-2xl border border-cyan-300/40 bg-[#0a2f86]/55 p-4 shadow-[0_0_28px_rgba(40,140,255,0.25)]">
-          <div>
-            <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">
-              {selection.screen === "all" ? "WHOLE PANEL" : "ONE SCREEN"}
-            </p>
-            <h1 className="mt-1 text-3xl font-semibold tracking-wide">
-              {selection.screen === "all" ? `Panel ${panel}` : current?.id}
-            </h1>
-            <p className="mt-1 text-sm text-cyan-100/80">
-              {selection.screen === "all"
-                ? `All ${targets.length} screens. Tap one screen to adjust it alone.`
-                : `${current?.hdmi}. Tap the panel around the screens to adjust all of them.`}
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <GlowButton active={allOn} onClick={() => applyPower(true)}>
-              On
-            </GlowButton>
-            <GlowButton active={allOff} tone="alert" onClick={() => applyPower(false)}>
-              Off
-            </GlowButton>
-          </div>
-
-          <div>
-            <div className="mb-2 flex items-baseline justify-between text-sm">
-              <span>Brightness</span>
-              <span className="font-mono text-cyan-100">{sameBrightness ? `${shownBrightness}%` : "Mixed"}</span>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col justify-center gap-4 rounded-2xl border border-cyan-300/40 bg-[#0a2f86]/55 p-4 shadow-[0_0_28px_rgba(40,140,255,0.25)]">
+            <div>
+              <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">
+                {selection.screen === "all" ? "WHOLE PANEL" : "ONE SCREEN"}
+              </p>
+              <h1 className="mt-1 text-3xl font-semibold tracking-wide">
+                {selection.screen === "all" ? `Panel ${panel}` : current?.id}
+              </h1>
+              <p className="mt-1 text-sm text-cyan-100/80">
+                {selection.screen === "all"
+                  ? `All ${targets.length} screens. Tap one screen to adjust it alone.`
+                  : `${current?.hdmi}. Tap the panel around the screens to adjust all of them.`}
+              </p>
             </div>
-            <Slider
-              min={0}
-              max={100}
-              value={[shownBrightness]}
-              onValueChange={(value) => applyBrightness(Array.isArray(value) ? value[0] : value)}
-              aria-label="Brightness"
-            />
+
+            <div className="grid grid-cols-2 gap-2">
+              <GlowButton active={allOn} onClick={() => applyPower(true)}>
+                On
+              </GlowButton>
+              <GlowButton active={allOff} tone="alert" onClick={() => applyPower(false)}>
+                Off
+              </GlowButton>
+            </div>
+
+            <div>
+              <div className="mb-2 flex items-baseline justify-between text-sm">
+                <span>Brightness</span>
+                <span className="font-mono text-cyan-100">{sameBrightness ? `${shownBrightness}%` : "Mixed"}</span>
+              </div>
+              <Slider
+                min={0}
+                max={100}
+                value={[shownBrightness]}
+                onValueChange={(value) => applyBrightness(Array.isArray(value) ? value[0] : value)}
+                aria-label="Brightness"
+              />
+            </div>
+
+            <p className="text-xs leading-5 text-cyan-100/70">
+              {allOn ? "Power on" : allOff ? "Power off" : "Power is mixed"} for{" "}
+              {selection.screen === "all" ? `panel ${panel}` : current?.id}. Nothing is sent to the displays yet.
+            </p>
           </div>
 
-          <p className="text-xs leading-5 text-cyan-100/70">
-            {allOn ? "Power on" : allOff ? "Power off" : "Power is mixed"} for{" "}
-            {selection.screen === "all" ? `panel ${panel}` : current?.id}. Nothing is sent to the displays yet.
-          </p>
+          <PanelFrame
+            panel={3}
+            title="Panel 3"
+            detail="192.168.0.103"
+            rows={PANEL_3}
+            preset={PRESETS[3].find((item) => item.id === preset[3])!}
+            selection={selection}
+            power={power}
+            onSelect={setSelection}
+          />
         </div>
 
         <PanelFrame
           panel={2}
           title="Panel 2"
-          detail="192.168.0.102 and .103"
+          detail="192.168.0.102"
           rows={PANEL_2}
           preset={PRESETS[2].find((item) => item.id === preset[2])!}
           selection={selection}

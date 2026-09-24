@@ -1,8 +1,9 @@
-# Opens the CCV2 landing page in one Edge window per section.
-# No colored cover frames are created.
+# Opens the CCV2 landing page on computer 192.168.0.103.
+# HDMI 1 (TV13) is the top monitor. HDMI 2 (TV18) is the monitor below it.
+# Each monitor is 1920x1080.
 
 param(
-    [ValidateSet("Independent", "Split", "Focus", "FocusSplit", "Full")]
+    [ValidateSet("Independent", "Full")]
     [string]$Preset,
     [switch]$Close
 )
@@ -288,33 +289,11 @@ function Zone($title, $x, $y, $w, $h) {
 
 $presets = @{
     Independent = @(
-        (Zone "TV9"  0    0   960  540)
-        (Zone "TV10" 960  0   960  540)
-        (Zone "TV14" 0    540 960  540)
-        (Zone "TV15" 960  540 960  540)
-        (Zone "TV11" 1920 0   960  540)
-        (Zone "TV12" 2880 0   960  540)
-        (Zone "TV16" 1920 540 960  540)
-        (Zone "TV17" 2880 540 960  540)
-    )
-    Split = @(
-        (Zone "TV9 TV10 TV14 TV15" 0 0 1920 1080)
-        (Zone "TV11 TV12 TV16 TV17" 1920 0 1920 1080)
-    )
-    Focus = @(
-        (Zone "TV9 TV14" 0 0 960 1080)
-        (Zone "TV10 TV11 TV15 TV16" 960 0 1920 1080)
-        (Zone "TV12 TV17" 2880 0 960 1080)
-    )
-    FocusSplit = @(
-        (Zone "TV9" 0 0 960 540)
-        (Zone "TV14" 0 540 960 540)
-        (Zone "TV10 TV11 TV15 TV16" 960 0 1920 1080)
-        (Zone "TV12" 2880 0 960 540)
-        (Zone "TV17" 2880 540 960 540)
+        (Zone "TV13" 0 0 1920 1080)
+        (Zone "TV18" 0 1080 1920 1080)
     )
     Full = @(
-        (Zone "All" 0 0 3840 1080)
+        (Zone "TV13 TV18" 0 0 1920 2160)
     )
 }
 
@@ -324,8 +303,8 @@ foreach ($existing in @(Get-EdgeHwnds)) { $known[$existing.ToInt64()] = $true }
 foreach ($zone in $presets[$Preset]) {
     $drawW = $zone.W
     $drawH = $zone.H
-    if (($zone.X + $zone.W) -lt 3840) { $drawW += 2 }
-    if (($zone.Y + $zone.H) -lt 1080) { $drawH += 2 }
+    if (($zone.X + $zone.W) -lt 1920) { $drawW += 2 }
+    if (($zone.Y + $zone.H) -lt 2160) { $drawH += 2 }
     Write-Output "Opening $($zone.Title)"
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
