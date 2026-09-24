@@ -175,13 +175,18 @@ public static class PanelWin {
             if (right < 0) right = 0;
             if (bottom < 0) bottom = 0;
         }
-        if (h + 40 > 1080) { if (top > 8) top = 8; }
-        else if (top < 40) top = 40;
-        int hostW = w + left + right;
-        int hostH = h + top + bottom;
-        SetWindowPos(host, new IntPtr(-2), x - left, y - top, hostW, hostH, 0x0040);
-        SetWindowRgn(host, CreateRectRgn(left, top, left + w, top + h), true);
-        MoveWindow(hwnd, 0, 0, hostW, hostH, true);
+        if (top < 40) top = 40;
+        if (h + top > 1080) {
+            SetWindowPos(host, new IntPtr(-2), x, y, w, h, 0x0040);
+            SetWindowRgn(host, IntPtr.Zero, true);
+            MoveWindow(hwnd, -left, -top, w + left + right, h + top + bottom, true);
+        } else {
+            int hostW = w + left + right;
+            int hostH = h + top + bottom;
+            SetWindowPos(host, new IntPtr(-2), x - left, y - top, hostW, hostH, 0x0040);
+            SetWindowRgn(host, CreateRectRgn(left, top, left + w, top + h), true);
+            MoveWindow(hwnd, 0, 0, hostW, hostH, true);
+        }
     }
 }
 "@
