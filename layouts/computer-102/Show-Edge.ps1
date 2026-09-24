@@ -20,6 +20,10 @@ public struct PanelRect {
     public int Right;
     public int Bottom;
 }
+public struct PanelPoint {
+    public int X;
+    public int Y;
+}
 public static class PanelWin {
     const int GWL_STYLE = -16;
     const int GWL_EXSTYLE = -20;
@@ -29,7 +33,15 @@ public static class PanelWin {
     [DllImport("user32.dll")]
     public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
     [DllImport("user32.dll")]
+    public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+    [DllImport("user32.dll")]
+    public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+    [DllImport("user32.dll")]
     public static extern bool GetWindowRect(IntPtr hWnd, out PanelRect lpRect);
+    [DllImport("user32.dll")]
+    public static extern bool GetClientRect(IntPtr hWnd, out PanelRect lpRect);
+    [DllImport("user32.dll")]
+    public static extern bool ClientToScreen(IntPtr hWnd, ref PanelPoint lpPoint);
     [DllImport("user32.dll", EntryPoint = "GetWindowLong")]
     static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
     [DllImport("user32.dll", EntryPoint = "SetWindowLong")]
@@ -63,6 +75,24 @@ public static class PanelWin {
         DwmSetWindowAttribute(hwnd, 34, ref noBorder, 4);
 
         SetWindowPos(hwnd, new IntPtr(-1), x, y, w, h, 0x0020 | 0x0040);
+    }
+
+    public static void ClipInto(IntPtr child, IntPtr parent, int width, int height) {
+        int style = GetWindowLong32(child, GWL_STYLE);
+        style &= ~unchecked((int)0x80000000);
+        style &= ~0x00C00000;
+        style &= ~0x00040000;
+        style |= 0x40000000;
+        style |= 0x10000000;
+        SetWindowLong32(child, GWL_STYLE, style);
+        SetParent(child, parent);
+        var origin = new PanelPoint();
+        ClientToScreen(child, ref origin);
+        PanelRect window;
+        GetWindowRect(child, out window);
+        int bar = origin.Y - window.Top;
+        if (bar < 8) bar = 33;
+        MoveWindow(child, 0, -bar, width, height + bar, true);
     }
 }
 "@
@@ -300,7 +330,7 @@ foreach ($zone in $presets[$Preset]) {
     $windowProcess = Hold-EdgeWindow $windowProcess $htmlTitle $zone.X $zone.Y $zone.W $zone.H 4
     $actual = Get-EdgeRectText $windowProcess.MainWindowHandle
     Write-Output "Placed $single at $actual"
-    $placed += $windowProcess
+    $placed += $windowProcess.MainWindowHandle
 }
 
 if ($placed.Count -eq 0) {
@@ -308,19 +338,47 @@ if ($placed.Count -eq 0) {
     exit 1
 }
 
-Write-Output "Holding the windows in place"
-$holdUntil = (Get-Date).AddSeconds(4)
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$script:hosts = @()
 $zones = @($presets[$Preset])
-while ((Get-Date) -lt $holdUntil) {
-    for ($i = 0; $i -lt $zones.Count; $i++) {
-        $single = ($zones[$i].Title -replace "`r?`n", " / ")
-        $hit = Get-EdgeWindow "$single Edge"
-        if ($hit) {
-            Move-EdgeWindow $hit.MainWindowHandle $zones[$i].X $zones[$i].Y $zones[$i].W $zones[$i].H
+for ($i = 0; $i -lt $zones.Count; $i++) {
+    $zone = $zones[$i]
+    $form = New-Object System.Windows.Forms.Form
+    $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+    $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+    $form.Bounds = New-Object System.Drawing.Rectangle $zone.X, $zone.Y, $zone.W, $zone.H
+    $form.BackColor = [System.Drawing.ColorTranslator]::FromHtml($zone.Color)
+    $form.TopMost = $true
+    $form.ShowInTaskbar = $false
+    $form.KeyPreview = $true
+    $form.Add_KeyDown({
+        if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Escape) {
+            [System.Windows.Forms.Application]::Exit()
         }
-    }
-    Start-Sleep -Milliseconds 300
+    })
+    $form.Show()
+    $script:hosts += $form
 }
 
-Write-Output "Opened $($placed.Count) borderless Edge window(s). Edge-Close.bat closes them."
-exit 0
+$script:zones = $zones
+function Update-Clips {
+    for ($i = 0; $i -lt $script:zones.Count; $i++) {
+        if ($i -ge $placed.Count) { continue }
+        $hwnd = $placed[$i]
+        if ($hwnd -ne [IntPtr]::Zero -and $script:hosts[$i].IsHandleCreated) {
+            [void][PanelWin]::ClipInto($hwnd, $script:hosts[$i].Handle, $script:zones[$i].W, $script:zones[$i].H)
+        }
+    }
+}
+
+Update-Clips
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 400
+$timer.Add_Tick({ Update-Clips })
+$timer.Start()
+Add-Content -Path $pidFile -Value $PID -Encoding Ascii
+Write-Output "Opened $($placed.Count) pages with no bars. Press Esc or run Edge-Close.bat."
+[System.Windows.Forms.Application]::Run()
+$timer.Stop()
+Stop-LayoutEdge $root
