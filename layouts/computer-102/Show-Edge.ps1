@@ -145,7 +145,7 @@ function Wait-ProfileWindow([string]$Profile, [int]$Seconds) {
         foreach ($proc in @($procs)) {
             if ($proc.CommandLine -and $proc.CommandLine -like "*$Profile*") {
                 $live = Get-Process -Id $proc.ProcessId -ErrorAction SilentlyContinue
-                if ($live -and $live.MainWindowHandle -ne 0) {
+                if ($live -and $live.MainWindowHandle -ne 0 -and $live.MainWindowTitle) {
                     return $live
                 }
             }
@@ -310,10 +310,15 @@ foreach ($zone in $presets[$Preset]) {
         continue
     }
     Add-Content -Path $pidFile -Value $windowProcess.Id -Encoding Ascii
-    $windowProcess = Hold-EdgeWindow $windowProcess "" $zone.X $zone.Y $zone.W $zone.H 1
+    Start-Sleep -Seconds 2
+    $windowProcess = Wait-ProfileWindow $profile 20
+    if (-not $windowProcess) {
+        Write-Output "Could not place $single. The page window did not appear."
+        continue
+    }
     $actual = Get-EdgeRectText $windowProcess.MainWindowHandle
     Write-Output "Placed $single at $actual"
-    $placed += $windowProcess.MainWindowHandle
+    $placed += $profile
 }
 
 if ($placed.Count -eq 0) {
@@ -336,7 +341,7 @@ for ($i = 0; $i -lt $zones.Count; $i++) {
     if (($zone.Y + $zone.H) -lt 1080) { $drawH += 8 }
     $form.Bounds = New-Object System.Drawing.Rectangle $zone.X, $zone.Y, $drawW, $drawH
     $form.BackColor = [System.Drawing.ColorTranslator]::FromHtml($zone.Color)
-    $form.TopMost = $true
+    $form.TopMost = $false
     $form.ShowInTaskbar = $false
     $form.KeyPreview = $true
     $form.Add_KeyDown({
@@ -353,7 +358,9 @@ $script:placed = $placed
 function Update-Clips {
     for ($i = 0; $i -lt $script:zones.Count; $i++) {
         if ($i -ge $script:placed.Count) { continue }
-        $hwnd = $script:placed[$i]
+        $found = Wait-ProfileWindow $script:placed[$i] 3
+        $hwnd = [IntPtr]::Zero
+        if ($found) { $hwnd = $found.MainWindowHandle }
         if ($hwnd -ne [IntPtr]::Zero -and $script:hosts[$i].IsHandleCreated) {
             [void][PanelWin]::ClipInto($hwnd, $script:hosts[$i].Handle, $script:hosts[$i].ClientSize.Width, $script:hosts[$i].ClientSize.Height)
         }
