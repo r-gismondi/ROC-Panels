@@ -1,6 +1,6 @@
-# Opens one Microsoft Edge window per section on computer 192.168.0.102.
-# Edge ignores size on its own and stacks new windows on the left monitor.
-# This script forces each window onto the same rectangles as the colored test.
+# Opens one borderless Microsoft Edge window per section on computer 192.168.0.102.
+# The page fills the rectangle with no title bar and no gap between sections.
+# F11 is not used: it would take a whole monitor and cover the other sections.
 
 param(
     [Parameter(Mandatory = $true)]
@@ -21,16 +21,49 @@ public struct PanelRect {
     public int Bottom;
 }
 public static class PanelWin {
+    const int GWL_STYLE = -16;
+    const int GWL_EXSTYLE = -20;
+
     [DllImport("user32.dll")]
     public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")]
-    public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
-    [DllImport("user32.dll")]
     public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
     [DllImport("user32.dll")]
-    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-    [DllImport("user32.dll")]
     public static extern bool GetWindowRect(IntPtr hWnd, out PanelRect lpRect);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLong")]
+    static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLong")]
+    static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
+    [DllImport("dwmapi.dll")]
+    static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+    public static void MakeBorderless(IntPtr hwnd, int x, int y, int w, int h) {
+        int style = GetWindowLong32(hwnd, GWL_STYLE);
+        style &= ~0x00C00000; // caption
+        style &= ~0x00040000; // thick frame
+        style &= ~0x00080000; // sys menu
+        style &= ~0x00020000; // minimize box
+        style &= ~0x00010000; // maximize box
+        style |= unchecked((int)0x80000000); // popup
+        style |= 0x10000000; // visible
+        SetWindowLong32(hwnd, GWL_STYLE, style);
+
+        int ex = GetWindowLong32(hwnd, GWL_EXSTYLE);
+        ex &= ~0x00000100;
+        ex &= ~0x00000200;
+        ex &= ~0x00000001;
+        ex &= ~0x00020000;
+        SetWindowLong32(hwnd, GWL_EXSTYLE, ex);
+
+        int doNotRound = 1;
+        DwmSetWindowAttribute(hwnd, 33, ref doNotRound, 4);
+        int noFrame = 1;
+        DwmSetWindowAttribute(hwnd, 2, ref noFrame, 4);
+        int noBorder = unchecked((int)0xFFFFFFFE);
+        DwmSetWindowAttribute(hwnd, 34, ref noBorder, 4);
+
+        SetWindowPos(hwnd, new IntPtr(-1), x, y, w, h, 0x0020 | 0x0040);
+    }
 }
 "@
 }
@@ -79,9 +112,11 @@ function Move-EdgeWindow([IntPtr]$Hwnd, [int]$X, [int]$Y, [int]$W, [int]$H) {
     if ($Hwnd -eq [IntPtr]::Zero) {
         return
     }
-    [void][PanelWin]::ShowWindow($Hwnd, 9)
-    [void][PanelWin]::MoveWindow($Hwnd, $X, $Y, $W, $H, $true)
-    [void][PanelWin]::SetWindowPos($Hwnd, [IntPtr]::Zero, $X, $Y, $W, $H, 0x0044)
+    $drawW = $W
+    $drawH = $H
+    if (($X + $W) -lt 3840) { $drawW += 2 }
+    if (($Y + $H) -lt 1080) { $drawH += 2 }
+    [void][PanelWin]::MakeBorderless($Hwnd, $X, $Y, $drawW, $drawH)
 }
 
 function Get-EdgeRectText([IntPtr]$Hwnd) {
@@ -233,7 +268,7 @@ foreach ($zone in $presets[$Preset]) {
 
     $uri = ([Uri]$htmlPath).AbsoluteUri
     Write-Output "Opening $single"
-    $argLine = "--user-data-dir=`"$profile`" --no-first-run --disable-fre --no-default-browser-check --disable-sync --disable-extensions --hide-crash-restore-bubble --disable-session-crashed-bubble --disable-features=msEdgeStartupBoost --new-window --window-position=$($zone.X),$($zone.Y) --window-size=$($zone.W),$($zone.H) `"$uri`""
+    $argLine = "--user-data-dir=`"$profile`" --no-first-run --disable-fre --no-default-browser-check --disable-sync --disable-extensions --hide-crash-restore-bubble --disable-session-crashed-bubble --disable-features=msEdgeStartupBoost --window-position=$($zone.X),$($zone.Y) --window-size=$($zone.W),$($zone.H) --app=`"$uri`""
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
     $startInfo.Arguments = $argLine
@@ -287,5 +322,5 @@ while ((Get-Date) -lt $holdUntil) {
     Start-Sleep -Milliseconds 300
 }
 
-Write-Output "Opened $($placed.Count) Edge window(s). Edge-Close.bat closes only these test windows."
+Write-Output "Opened $($placed.Count) borderless Edge window(s). Edge-Close.bat closes them."
 exit 0

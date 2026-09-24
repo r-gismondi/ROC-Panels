@@ -15,7 +15,7 @@ Display 1 must be the left monitor (HDMI 1) and display 2 the right monitor (HDM
 
 Press Esc in a colored test window to close that preset.
 
-Edge presets open one Microsoft Edge window in each of those same sections. Each window is a separate Edge profile, so an Edge window already open on this PC stays where it is. The toolbar sits inside the rectangle. `Edge-Close.bat` closes only the Edge windows these files opened.
+Edge presets open one borderless Microsoft Edge window in each of those same sections, with no title bar and no gap between sections. F11 is not used, because it would cover the whole monitor. Each window is a separate Edge profile, so an Edge window already open on this PC stays where it is. `Edge-Close.bat` closes only the Edge windows these files opened.
 
 | File | Edge windows |
 |---|---|
