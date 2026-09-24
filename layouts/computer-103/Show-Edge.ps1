@@ -24,6 +24,7 @@ public static class PanelWin {
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr child, string cls, string title);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out PanelRect lpRect);
+    [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hWnd, out PanelRect lpRect);
     [StructLayout(LayoutKind.Sequential)]
     public struct PanelPlacement {
         public int length;
@@ -182,6 +183,12 @@ public static class PanelWin {
             SetWindowPos(host, new IntPtr(-2), x, y, w, h, 0x0040);
             SetWindowRgn(host, IntPtr.Zero, true);
             MoveWindow(hwnd, 0, 0, w, h, true);
+            IntPtr page = PageWidget(hwnd);
+            if (page != IntPtr.Zero) {
+                PanelRect client;
+                GetClientRect(hwnd, out client);
+                MoveWindow(page, 0, 0, client.Right - client.Left, client.Bottom - client.Top, true);
+            }
         } else if (top < 40) top = 40;
         if (h < 1080) {
             int hostW = w + left + right;
