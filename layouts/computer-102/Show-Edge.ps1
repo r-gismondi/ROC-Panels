@@ -327,7 +327,7 @@ foreach ($zone in $presets[$Preset]) {
         continue
     }
     Add-Content -Path $pidFile -Value $windowProcess.Id -Encoding Ascii
-    $windowProcess = Hold-EdgeWindow $windowProcess $htmlTitle $zone.X $zone.Y $zone.W $zone.H 4
+    $windowProcess = Hold-EdgeWindow $windowProcess $htmlTitle $zone.X $zone.Y $zone.W $zone.H 1
     $actual = Get-EdgeRectText $windowProcess.MainWindowHandle
     Write-Output "Placed $single at $actual"
     $placed += $windowProcess.MainWindowHandle
