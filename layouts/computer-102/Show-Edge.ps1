@@ -151,6 +151,7 @@ public static class PanelWin {
         SetWindowRgn(hwnd, IntPtr.Zero, false);
         int style = GetWindowLong32(hwnd, -16);
         style &= ~0x00C00000;
+        style &= ~0x00040000;
         style &= ~unchecked((int)0x80000000);
         style |= 0x40000000;
         style |= 0x10000000;
@@ -175,12 +176,13 @@ public static class PanelWin {
             if (right < 0) right = 0;
             if (bottom < 0) bottom = 0;
         }
-        if (top < 40) top = 40;
-        if (h + top > 1080) {
+        if (h >= 1080) {
+            SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0, 0x0027);
             SetWindowPos(host, new IntPtr(-2), x, y, w, h, 0x0040);
             SetWindowRgn(host, IntPtr.Zero, true);
-            MoveWindow(hwnd, -left, -top, w + left + right, h + top + bottom, true);
-        } else {
+            MoveWindow(hwnd, 0, 0, w, h, true);
+        } else if (top < 40) top = 40;
+        if (h < 1080) {
             int hostW = w + left + right;
             int hostH = h + top + bottom;
             SetWindowPos(host, new IntPtr(-2), x - left, y - top, hostW, hostH, 0x0040);
@@ -350,7 +352,7 @@ foreach ($zone in $presets[$Preset]) {
     Write-Output "Opening $($zone.Title)"
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
-    $startInfo.Arguments = "--app=`"$HomeUrl`" --new-window"
+    $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --app=`"$HomeUrl`" --new-window"
     $startInfo.UseShellExecute = $true
     $started = New-Object System.Diagnostics.Process
     $started.StartInfo = $startInfo
