@@ -42,7 +42,10 @@ public static class PanelWin {
         style |= unchecked((int)0x80000000);
         style |= 0x10000000;
         SetWindowLong32(hwnd, -16, style);
-        SetWindowPos(hwnd, IntPtr.Zero, x, y - bar, w, h + bar, 0x0020 | 0x0040);
+        int ex = GetWindowLong32(hwnd, -20);
+        ex &= ~0x00000008;
+        SetWindowLong32(hwnd, -20, ex);
+        SetWindowPos(hwnd, new IntPtr(-2), x, y - bar, w, h + bar, 0x0020 | 0x0040);
         SetWindowRgn(hwnd, CreateRectRgn(0, bar, w, h + bar), true);
     }
 }
