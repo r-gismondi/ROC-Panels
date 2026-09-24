@@ -146,7 +146,7 @@ public static class PanelWin {
         style |= 0x02000000;
         SetWindowLong32(host, -16, style);
     }
-    public static void Fit(IntPtr hwnd, IntPtr host, int w, int h) {
+    public static void Fit(IntPtr hwnd, IntPtr host, int x, int y, int w, int h) {
         SetWindowRgn(hwnd, IntPtr.Zero, false);
         int style = GetWindowLong32(hwnd, -16);
         style &= ~0x00C00000;
@@ -175,7 +175,11 @@ public static class PanelWin {
             if (bottom < 0) bottom = 0;
         }
         if (top < 80) top = 112;
-        MoveWindow(hwnd, -left, -top, w + left + right, h + top + bottom, true);
+        int hostW = w + left + right;
+        int hostH = h + top + bottom;
+        SetWindowPos(host, new IntPtr(-2), x - left, y - top, hostW, hostH, 0x0020 | 0x0040);
+        SetWindowRgn(host, CreateRectRgn(left, top, left + w, top + h), true);
+        MoveWindow(hwnd, 0, 0, hostW, hostH, true);
     }
 }
 "@
@@ -354,7 +358,7 @@ foreach ($item in $opened) {
     $form.Text = "Section"
     $form.Show()
     [void][PanelWin]::PrepareHost($form.Handle)
-    [void][PanelWin]::Fit($item.Hwnd, $form.Handle, $item.W, $item.H)
+    [void][PanelWin]::Fit($item.Hwnd, $form.Handle, $item.X, $item.Y, $item.W, $item.H)
     $item | Add-Member -NotePropertyName Host -NotePropertyValue $form.Handle -Force
     $script:hostsLeft += 1
     $form.Add_FormClosed({
@@ -369,7 +373,7 @@ $timer.Add_Tick({
     $script:fitTicks += 1
     foreach ($item in $opened) {
         if ([PanelWin]::IsWindow($item.Hwnd)) {
-            [void][PanelWin]::Fit($item.Hwnd, $item.Host, $item.W, $item.H)
+            [void][PanelWin]::Fit($item.Hwnd, $item.Host, $item.X, $item.Y, $item.W, $item.H)
         }
     }
     if ($script:fitTicks -ge 12) { $timer.Stop() }
