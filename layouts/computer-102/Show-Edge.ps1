@@ -35,6 +35,8 @@ public static class PanelWin {
     [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr hWndParent, EnumProc lpEnumFunc, IntPtr lParam);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
     [DllImport("user32.dll")] public static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);
+    [DllImport("user32.dll")] public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+    [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
     [DllImport("gdi32.dll")] public static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     public delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
@@ -138,6 +140,42 @@ public static class PanelWin {
         SetWindowPos(hwnd, new IntPtr(-2), posX, posY, posW, posH, 0x0020 | 0x0040);
         SetWindowRgn(hwnd, CreateRectRgn(left, top, left + w, top + h), true);
     }
+    public static void PrepareHost(IntPtr host) {
+        int style = GetWindowLong32(host, -16);
+        style |= 0x02000000;
+        SetWindowLong32(host, -16, style);
+    }
+    public static void Fit(IntPtr hwnd, IntPtr host, int w, int h) {
+        SetWindowRgn(hwnd, IntPtr.Zero, false);
+        int style = GetWindowLong32(hwnd, -16);
+        style &= ~0x00C00000;
+        style &= ~unchecked((int)0x80000000);
+        style |= 0x40000000;
+        style |= 0x10000000;
+        SetWindowLong32(hwnd, -16, style);
+        SetParent(hwnd, host);
+        PanelRect window;
+        GetWindowRect(hwnd, out window);
+        int left = 0;
+        int top = 0;
+        int right = 0;
+        int bottom = 0;
+        IntPtr widget = PageWidget(hwnd);
+        if (widget != IntPtr.Zero) {
+            PanelRect page;
+            GetWindowRect(widget, out page);
+            left = page.Left - window.Left;
+            top = page.Top - window.Top;
+            right = window.Right - page.Right;
+            bottom = window.Bottom - page.Bottom;
+            if (left < 0) left = 0;
+            if (top < 0) top = 0;
+            if (right < 0) right = 0;
+            if (bottom < 0) bottom = 0;
+        }
+        if (top < 80) top = 112;
+        MoveWindow(hwnd, -left, -top, w + left + right, h + top + bottom, true);
+    }
 }
 "@
 }
@@ -219,10 +257,22 @@ function Close-RecordedWindows([string]$Path) {
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $hwndFile = Join-Path $root "edge-layout.hwnds"
+$hostPidFile = Join-Path $root "edge-host.pid"
+function Stop-HostProcess([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $old = 0
+    $text = (Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ([int]::TryParse(([string]$text).Trim(), [ref]$old) -and $old -gt 0 -and $old -ne $PID) {
+        Stop-Process -Id $old -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+}
 if ($Close) {
     Close-RecordedWindows $hwndFile
+    Stop-HostProcess $hostPidFile
     exit 0
 }
+Stop-HostProcess $hostPidFile
 if (-not $Preset) { Write-Error "Pick a preset."; exit 1 }
 
 $edge = Find-Edge
@@ -307,20 +357,43 @@ foreach ($zone in $presets[$Preset]) {
 
 if ($opened.Count -eq 0) { Write-Output "Opened 0 windows."; exit 1 }
 
-# Edge restores its own size once the page finishes loading. Re-apply the
-# same rectangle a few times. Do not clip or restyle the window: that shift
-# stacked the tiles and left the desktop showing through.
-$holdUntil = (Get-Date).AddSeconds(8)
-while ((Get-Date) -lt $holdUntil) {
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+Set-Content -Path $hostPidFile -Value $PID
+$script:hostsLeft = 0
+foreach ($item in $opened) {
+    $form = New-Object System.Windows.Forms.Form
+    $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+    $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+    $form.Location = New-Object System.Drawing.Point $item.X, $item.Y
+    $form.ClientSize = New-Object System.Drawing.Size $item.W, $item.H
+    $form.BackColor = [System.Drawing.Color]::Black
+    $form.ShowInTaskbar = $false
+    $form.TopMost = $false
+    $form.Text = "Section"
+    $form.Show()
+    [void][PanelWin]::PrepareHost($form.Handle)
+    [void][PanelWin]::Fit($item.Hwnd, $form.Handle, $item.W, $item.H)
+    $item | Add-Member -NotePropertyName Host -NotePropertyValue $form.Handle -Force
+    $script:hostsLeft += 1
+    $form.Add_FormClosed({
+        $script:hostsLeft -= 1
+        if ($script:hostsLeft -le 0) { [System.Windows.Forms.Application]::ExitThread() }
+    })
+}
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 500
+$script:fitTicks = 0
+$timer.Add_Tick({
+    $script:fitTicks += 1
     foreach ($item in $opened) {
         if ([PanelWin]::IsWindow($item.Hwnd)) {
-            [void][PanelWin]::Place($item.Hwnd, $item.X, $item.Y, $item.W, $item.H)
+            [void][PanelWin]::Fit($item.Hwnd, $item.Host, $item.W, $item.H)
         }
     }
-    Start-Sleep -Milliseconds 400
-}
-foreach ($item in $opened) {
-    Write-Output ("At " + $item.X + "," + $item.Y + " " + $item.W + "x" + $item.H + " -> " + [PanelWin]::RectOf($item.Hwnd))
-}
-Write-Output "Opened $($opened.Count) pages in your normal Edge profile. Edge-Close.bat closes only these windows."
+    if ($script:fitTicks -ge 12) { $timer.Stop() }
+})
+$timer.Start()
+Write-Output "Opened $($opened.Count) pages. Leave this window open. Edge-Close.bat closes them."
+[System.Windows.Forms.Application]::Run()
 exit 0
