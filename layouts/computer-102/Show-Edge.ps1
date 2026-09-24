@@ -44,31 +44,19 @@ public static class PanelWin {
         GetWindowThreadProcessId(hwnd, out pid);
         return pid;
     }
-    [DllImport("gdi32.dll")] public static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
     [DllImport("user32.dll", EntryPoint = "GetWindowLong")] static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
     [DllImport("user32.dll", EntryPoint = "SetWindowLong")] static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
-    public static int TitleBar(IntPtr hwnd) {
+    public static bool IsWindow(IntPtr hwnd) {
         PanelRect window;
-        GetWindowRect(hwnd, out window);
-        PanelPoint origin = new PanelPoint();
-        ClientToScreen(hwnd, ref origin);
-        int bar = origin.Y - window.Top;
-        if (bar < 24) bar = 40;
-        return bar;
+        return GetWindowRect(hwnd, out window);
     }
     public static void Place(IntPtr hwnd, int x, int y, int w, int h) {
-        int bar = TitleBar(hwnd);
-        int style = GetWindowLong32(hwnd, -16);
-        style &= ~0x00C00000;
-        style &= ~0x00040000;
-        style |= unchecked((int)0x80000000);
-        style |= 0x10000000;
-        SetWindowLong32(hwnd, -16, style);
         int ex = GetWindowLong32(hwnd, -20);
-        ex &= ~0x00000008;
-        SetWindowLong32(hwnd, -20, ex);
-        SetWindowPos(hwnd, new IntPtr(-2), x, y - bar, w, h + bar, 0x0020 | 0x0040);
-        SetWindowRgn(hwnd, CreateRectRgn(0, bar, w, h + bar), true);
+        if ((ex & 0x00000008) != 0) {
+            ex &= ~0x00000008;
+            SetWindowLong32(hwnd, -20, ex);
+        }
+        SetWindowPos(hwnd, new IntPtr(-2), x, y, w, h, 0x0020 | 0x0040);
     }
 }
 "@
@@ -204,8 +192,6 @@ foreach ($existing in @(Get-EdgeHwnds)) { $known[$existing.ToInt64()] = $true }
 foreach ($zone in $presets[$Preset]) {
     $drawW = $zone.W
     $drawH = $zone.H
-    if (($zone.X + $zone.W) -lt 3840) { $drawW += 8 }
-    if (($zone.Y + $zone.H) -lt 1080) { $drawH += 8 }
     Write-Output "Opening $($zone.Title)"
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
@@ -234,13 +220,22 @@ foreach ($zone in $presets[$Preset]) {
     Add-Content -Path $hwndFile -Value $hwnd.ToInt64() -Encoding Ascii
     $opened += [pscustomobject]@{ Hwnd = $hwnd; X = $zone.X; Y = $zone.Y; W = $drawW; H = $drawH }
     Write-Output "Placed $($zone.Title)"
+    Start-Sleep -Milliseconds 700
 }
 
 if ($opened.Count -eq 0) { Write-Output "Opened 0 windows."; exit 1 }
 
-Start-Sleep -Seconds 2
-foreach ($item in ($opened | Sort-Object Y -Descending)) {
-    [void][PanelWin]::Place($item.Hwnd, $item.X, $item.Y, $item.W, $item.H)
+# Edge restores its own size once the page finishes loading. Re-apply the
+# same rectangle a few times. Do not clip or restyle the window: that shift
+# stacked the tiles and left the desktop showing through.
+$holdUntil = (Get-Date).AddSeconds(8)
+while ((Get-Date) -lt $holdUntil) {
+    foreach ($item in $opened) {
+        if ([PanelWin]::IsWindow($item.Hwnd)) {
+            [void][PanelWin]::Place($item.Hwnd, $item.X, $item.Y, $item.W, $item.H)
+        }
+    }
+    Start-Sleep -Milliseconds 400
 }
 Write-Output "Opened $($opened.Count) pages in your normal Edge profile. Edge-Close.bat closes only these windows."
 exit 0
