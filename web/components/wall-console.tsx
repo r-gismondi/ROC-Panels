@@ -158,7 +158,7 @@ export function WallConsole() {
         <div className="flex items-center gap-3">
           <img src="/mt-logo.png" alt="MT" className="h-10 w-auto" />
           <div>
-            <p className="text-sm font-semibold tracking-[0.16em]">OPERATIONS FLOOR</p>
+            <p className="text-sm font-semibold tracking-[0.14em] whitespace-nowrap">REMOTE OPERATION CENTER</p>
             <p className="text-[11px] tracking-[0.22em] text-cyan-100/70">PANEL CONTROL</p>
           </div>
         </div>

@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Operations floor",
-  description: "Wall control for the operations floor panels and window layouts.",
+  title: "Remote Operation Center",
+  description: "Panel control for the Remote Operation Center.",
 };
 
 export default function RootLayout({
