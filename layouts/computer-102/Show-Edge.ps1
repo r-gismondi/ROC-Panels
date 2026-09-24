@@ -349,7 +349,6 @@ for ($i = 0; $i -lt $zones.Count; $i++) {
             [System.Windows.Forms.Application]::Exit()
         }
     })
-    $form.Show()
     $script:hosts += $form
 }
 
@@ -359,11 +358,12 @@ function Update-Clips {
     for ($i = 0; $i -lt $script:zones.Count; $i++) {
         if ($i -ge $script:placed.Count) { continue }
         $found = Wait-ProfileWindow $script:placed[$i] 3
-        $hwnd = [IntPtr]::Zero
-        if ($found) { $hwnd = $found.MainWindowHandle }
-        if ($hwnd -ne [IntPtr]::Zero -and $script:hosts[$i].IsHandleCreated) {
-            [void][PanelWin]::ClipInto($hwnd, $script:hosts[$i].Handle, $script:hosts[$i].ClientSize.Width, $script:hosts[$i].ClientSize.Height)
-        }
+        if (-not $found) { continue }
+        $drawW = $script:zones[$i].W
+        $drawH = $script:zones[$i].H
+        if (($script:zones[$i].X + $drawW) -lt 3840) { $drawW += 8 }
+        if (($script:zones[$i].Y + $drawH) -lt 1080) { $drawH += 8 }
+        [void][PanelWin]::MakeBorderless($found.MainWindowHandle, $script:zones[$i].X, $script:zones[$i].Y, $drawW, $drawH)
     }
 }
 
