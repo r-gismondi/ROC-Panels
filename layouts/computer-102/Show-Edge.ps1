@@ -14,19 +14,36 @@ if (-not ("PanelWin" -as [type])) {
     Add-Type @"
 using System;
 using System.Runtime.InteropServices;
+public struct PanelRect { public int Left; public int Top; public int Right; public int Bottom; }
+public struct PanelPoint { public int X; public int Y; }
 public static class PanelWin {
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out PanelRect lpRect);
+    [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr hWnd, ref PanelPoint lpPoint);
+    [DllImport("user32.dll")] public static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);
+    [DllImport("gdi32.dll")] public static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
     [DllImport("user32.dll", EntryPoint = "GetWindowLong")] static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
     [DllImport("user32.dll", EntryPoint = "SetWindowLong")] static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
-    public static void MakeBorderless(IntPtr hwnd, int x, int y, int w, int h) {
+    public static int TitleBar(IntPtr hwnd) {
+        PanelRect window;
+        GetWindowRect(hwnd, out window);
+        PanelPoint origin = new PanelPoint();
+        ClientToScreen(hwnd, ref origin);
+        int bar = origin.Y - window.Top;
+        if (bar < 24) bar = 40;
+        return bar;
+    }
+    public static void Place(IntPtr hwnd, int x, int y, int w, int h) {
+        int bar = TitleBar(hwnd);
         int style = GetWindowLong32(hwnd, -16);
         style &= ~0x00C00000;
         style &= ~0x00040000;
         style |= unchecked((int)0x80000000);
         style |= 0x10000000;
         SetWindowLong32(hwnd, -16, style);
-        SetWindowPos(hwnd, new IntPtr(-1), x, y, w, h, 0x0020 | 0x0040);
+        SetWindowPos(hwnd, IntPtr.Zero, x, y - bar, w, h + bar, 0x0020 | 0x0040);
+        SetWindowRgn(hwnd, CreateRectRgn(0, bar, w, h + bar), true);
     }
 }
 "@
@@ -158,7 +175,7 @@ foreach ($zone in $presets[$Preset]) {
         continue
     }
     Add-Content -Path $pidFile -Value $windowProcess.Id -Encoding Ascii
-    [void][PanelWin]::MakeBorderless($windowProcess.MainWindowHandle, $zone.X, $zone.Y, $drawW, $drawH)
+    [void][PanelWin]::Place($windowProcess.MainWindowHandle, $zone.X, $zone.Y, $drawW, $drawH)
     $opened += [pscustomobject]@{ Profile = $profile; X = $zone.X; Y = $zone.Y; W = $drawW; H = $drawH }
     Write-Output "Placed $($zone.Title)"
 }
@@ -169,7 +186,7 @@ Start-Sleep -Seconds 2
 foreach ($item in $opened) {
     $again = Find-ProfileWindow $item.Profile
     if ($again) {
-        [void][PanelWin]::MakeBorderless($again.MainWindowHandle, $item.X, $item.Y, $item.W, $item.H)
+        [void][PanelWin]::Place($again.MainWindowHandle, $item.X, $item.Y, $item.W, $item.H)
     }
 }
 Write-Output "Opened $($opened.Count) pages. No colored frames. Edge-Close.bat closes them."
