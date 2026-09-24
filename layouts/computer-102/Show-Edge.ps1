@@ -32,7 +32,10 @@ public static class PanelWin {
     }
     [DllImport("user32.dll")] public static extern bool SetWindowPlacement(IntPtr hWnd, ref PanelPlacement lpwndpl);
     [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr hWnd, ref PanelPoint lpPoint);
+    [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr hWndParent, EnumProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
     [DllImport("user32.dll")] public static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);
+    [DllImport("gdi32.dll")] public static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     public delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc lpEnumFunc, IntPtr lParam);
@@ -66,6 +69,26 @@ public static class PanelWin {
         if (!GetWindowRect(hwnd, out window)) return "unread";
         return window.Left + "," + window.Top + " " + (window.Right - window.Left) + "x" + (window.Bottom - window.Top);
     }
+    public static IntPtr PageWidget(IntPtr hwnd) {
+        IntPtr best = IntPtr.Zero;
+        int bestArea = 0;
+        EnumChildWindows(hwnd, (child, l) => {
+            var name = new System.Text.StringBuilder(256);
+            GetClassName(child, name, name.Capacity);
+            if (name.ToString() == "Chrome_RenderWidgetHostHWND") {
+                PanelRect widget;
+                if (GetWindowRect(child, out widget)) {
+                    int area = (widget.Right - widget.Left) * (widget.Bottom - widget.Top);
+                    if (area > bestArea) {
+                        bestArea = area;
+                        best = child;
+                    }
+                }
+            }
+            return true;
+        }, IntPtr.Zero);
+        return best;
+    }
     public static void Place(IntPtr hwnd, int x, int y, int w, int h) {
         ShowWindow(hwnd, 9);
         int ex = GetWindowLong32(hwnd, -20);
@@ -73,15 +96,47 @@ public static class PanelWin {
             ex &= ~0x00000008;
             SetWindowLong32(hwnd, -20, ex);
         }
+        PanelRect window;
+        GetWindowRect(hwnd, out window);
+        int left = 0;
+        int top = 0;
+        int right = 0;
+        int bottom = 0;
+        IntPtr widget = PageWidget(hwnd);
+        if (widget != IntPtr.Zero) {
+            PanelRect page;
+            GetWindowRect(widget, out page);
+            left = page.Left - window.Left;
+            top = page.Top - window.Top;
+            right = window.Right - page.Right;
+            bottom = window.Bottom - page.Bottom;
+            if (left < 0) left = 0;
+            if (top < 0) top = 0;
+            if (right < 0) right = 0;
+            if (bottom < 0) bottom = 0;
+        } else {
+            PanelPoint origin = new PanelPoint();
+            ClientToScreen(hwnd, ref origin);
+            top = origin.Y - window.Top + 48;
+            left = 8;
+            right = 8;
+            bottom = 8;
+            if (top < 48) top = 88;
+        }
+        int posX = x - left;
+        int posY = y - top;
+        int posW = w + left + right;
+        int posH = h + top + bottom;
         PanelPlacement placement = new PanelPlacement();
         placement.length = Marshal.SizeOf(typeof(PanelPlacement));
         placement.showCmd = 1;
-        placement.normalPosition.Left = x;
-        placement.normalPosition.Top = y;
-        placement.normalPosition.Right = x + w;
-        placement.normalPosition.Bottom = y + h;
+        placement.normalPosition.Left = posX;
+        placement.normalPosition.Top = posY;
+        placement.normalPosition.Right = posX + posW;
+        placement.normalPosition.Bottom = posY + posH;
         SetWindowPlacement(hwnd, ref placement);
-        SetWindowPos(hwnd, new IntPtr(-2), x, y, w, h, 0x0020 | 0x0040);
+        SetWindowPos(hwnd, new IntPtr(-2), posX, posY, posW, posH, 0x0020 | 0x0040);
+        SetWindowRgn(hwnd, CreateRectRgn(left, top, left + w, top + h), true);
     }
 }
 "@
@@ -217,6 +272,8 @@ foreach ($existing in @(Get-EdgeHwnds)) { $known[$existing.ToInt64()] = $true }
 foreach ($zone in $presets[$Preset]) {
     $drawW = $zone.W
     $drawH = $zone.H
+    if (($zone.X + $zone.W) -lt 3840) { $drawW += 2 }
+    if (($zone.Y + $zone.H) -lt 1080) { $drawH += 2 }
     Write-Output "Opening $($zone.Title)"
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge

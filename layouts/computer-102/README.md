@@ -15,7 +15,7 @@ Display 1 must be the left monitor (HDMI 1) and display 2 the right monitor (HDM
 
 Press Esc in a colored test window to close that preset.
 
-Edge presets open https://ccv2.mtllc.us/landing in the normal signed-in Edge profile, one window per section, sized to that section. Run `Edge-Close.bat` to close only those windows. An Edge window you opened yourself stays open.
+Edge presets open https://ccv2.mtllc.us/landing in the normal signed-in Edge profile, one window per section. The window frame and the browser bar are clipped off so the page fills the section. Run `Edge-Close.bat` to close only those windows. An Edge window you opened yourself stays open.
 
 | File | Edge windows |
 |---|---|
