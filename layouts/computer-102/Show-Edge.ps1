@@ -2,9 +2,9 @@
 # No colored cover frames are created.
 
 param(
-    [Parameter(Mandatory = $true)]
     [ValidateSet("Independent", "DualFocus1", "DualFocus2", "DualFocus3", "Full")]
-    [string]$Preset
+    [string]$Preset,
+    [switch]$Close
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,6 +22,28 @@ public static class PanelWin {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out PanelRect lpRect);
     [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr hWnd, ref PanelPoint lpPoint);
     [DllImport("user32.dll")] public static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    public delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+    public static void CloseWindow(IntPtr hwnd) { PostMessage(hwnd, 0x0010, IntPtr.Zero, IntPtr.Zero); }
+    public static IntPtr[] VisibleWindows() {
+        var found = new System.Collections.Generic.List<IntPtr>();
+        EnumWindows((h, l) => { if (IsWindowVisible(h)) found.Add(h); return true; }, IntPtr.Zero);
+        return found.ToArray();
+    }
+    public static string TextOf(IntPtr hwnd) {
+        var buffer = new System.Text.StringBuilder(512);
+        GetWindowText(hwnd, buffer, buffer.Capacity);
+        return buffer.ToString();
+    }
+    public static uint PidOf(IntPtr hwnd) {
+        uint pid;
+        GetWindowThreadProcessId(hwnd, out pid);
+        return pid;
+    }
     [DllImport("gdi32.dll")] public static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
     [DllImport("user32.dll", EntryPoint = "GetWindowLong")] static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
     [DllImport("user32.dll", EntryPoint = "SetWindowLong")] static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
@@ -103,19 +125,44 @@ function Wait-ProfileWindow([string]$Profile, [int]$Seconds) {
     return $null
 }
 
+function Get-EdgeHwnds {
+    $list = @()
+    foreach ($hwnd in @([PanelWin]::VisibleWindows())) {
+        $procId = [PanelWin]::PidOf($hwnd)
+        $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
+        $title = [PanelWin]::TextOf($hwnd)
+        if ($proc -and $proc.ProcessName -eq "msedge" -and $title) {
+            $list += $hwnd
+        }
+    }
+    return $list
+}
+
+function Close-RecordedWindows([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    foreach ($line in @(Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)) {
+        $value = 0L
+        if ([int64]::TryParse(([string]$line).Trim(), [ref]$value) -and $value -ne 0) {
+            [void][PanelWin]::CloseWindow([IntPtr]$value)
+        }
+    }
+    Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+}
+
+$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$hwndFile = Join-Path $root "edge-layout.hwnds"
+if ($Close) {
+    Close-RecordedWindows $hwndFile
+    exit 0
+}
+if (-not $Preset) { Write-Error "Pick a preset."; exit 1 }
+
 $edge = Find-Edge
 if (-not $edge) { Write-Error "Microsoft Edge was not found."; exit 1 }
 
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Stop-LayoutEdge $root
-Start-Sleep -Milliseconds 500
-$profileRoot = Join-Path $root "edge-profiles"
-if (Test-Path -LiteralPath $profileRoot) {
-    Remove-Item -LiteralPath $profileRoot -Recurse -Force -ErrorAction SilentlyContinue
-}
-$pidFile = Join-Path $root "edge-layout.pids"
-if (Test-Path -LiteralPath $pidFile) { Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue }
-Set-Content -Path $pidFile -Value $PID -Encoding Ascii
+Close-RecordedWindows $hwndFile
+Start-Sleep -Milliseconds 400
 
 function Zone($title, $x, $y, $w, $h) {
     [pscustomobject]@{ Title = $title; X = $x; Y = $y; W = $w; H = $h }
@@ -152,34 +199,40 @@ $presets = @{
 }
 
 $opened = @()
-$index = 0
+$known = @{}
+foreach ($existing in @(Get-EdgeHwnds)) { $known[$existing.ToInt64()] = $true }
 foreach ($zone in $presets[$Preset]) {
-    $index += 1
-    $profile = Join-Path $profileRoot ("{0}-{1}" -f $Preset, $index)
-    New-Item -ItemType Directory -Force -Path (Join-Path $profile "Default") | Out-Null
-    Write-Utf8NoBom (Join-Path $profile "First Run") ""
     $drawW = $zone.W
     $drawH = $zone.H
     if (($zone.X + $zone.W) -lt 3840) { $drawW += 8 }
     if (($zone.Y + $zone.H) -lt 1080) { $drawH += 8 }
     Write-Output "Opening $($zone.Title)"
-    $argLine = "--user-data-dir=`"$profile`" --no-first-run --disable-fre --no-default-browser-check --disable-sync --hide-crash-restore-bubble --window-position=$($zone.X),$($zone.Y) --window-size=$drawW,$drawH --app=`"$HomeUrl`""
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
-    $startInfo.Arguments = $argLine
+    $startInfo.Arguments = "--new-window `"$HomeUrl`""
     $startInfo.UseShellExecute = $true
     $started = New-Object System.Diagnostics.Process
     $started.StartInfo = $startInfo
     [void]$started.Start()
-    Add-Content -Path $pidFile -Value $started.Id -Encoding Ascii
-    $windowProcess = Wait-ProfileWindow $profile 30
-    if (-not $windowProcess) {
+    $hwnd = [IntPtr]::Zero
+    $deadline = (Get-Date).AddSeconds(25)
+    while ((Get-Date) -lt $deadline -and $hwnd -eq [IntPtr]::Zero) {
+        Start-Sleep -Milliseconds 300
+        foreach ($candidate in @(Get-EdgeHwnds)) {
+            if (-not $known.ContainsKey($candidate.ToInt64())) {
+                $hwnd = $candidate
+                $known[$candidate.ToInt64()] = $true
+                break
+            }
+        }
+    }
+    if ($hwnd -eq [IntPtr]::Zero) {
         Write-Output "No window for $($zone.Title)"
         continue
     }
-    Add-Content -Path $pidFile -Value $windowProcess.Id -Encoding Ascii
-    [void][PanelWin]::Place($windowProcess.MainWindowHandle, $zone.X, $zone.Y, $drawW, $drawH)
-    $opened += [pscustomobject]@{ Profile = $profile; X = $zone.X; Y = $zone.Y; W = $drawW; H = $drawH }
+    [void][PanelWin]::Place($hwnd, $zone.X, $zone.Y, $drawW, $drawH)
+    Add-Content -Path $hwndFile -Value $hwnd.ToInt64() -Encoding Ascii
+    $opened += [pscustomobject]@{ Hwnd = $hwnd; X = $zone.X; Y = $zone.Y; W = $drawW; H = $drawH }
     Write-Output "Placed $($zone.Title)"
 }
 
@@ -187,10 +240,7 @@ if ($opened.Count -eq 0) { Write-Output "Opened 0 windows."; exit 1 }
 
 Start-Sleep -Seconds 2
 foreach ($item in ($opened | Sort-Object Y -Descending)) {
-    $again = Find-ProfileWindow $item.Profile
-    if ($again) {
-        [void][PanelWin]::Place($again.MainWindowHandle, $item.X, $item.Y, $item.W, $item.H)
-    }
+    [void][PanelWin]::Place($item.Hwnd, $item.X, $item.Y, $item.W, $item.H)
 }
-Write-Output "Opened $($opened.Count) pages. No colored frames. Edge-Close.bat closes them."
+Write-Output "Opened $($opened.Count) pages in your normal Edge profile. Edge-Close.bat closes only these windows."
 exit 0
