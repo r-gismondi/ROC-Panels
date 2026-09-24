@@ -19,7 +19,18 @@ public struct PanelPoint { public int X; public int Y; }
 public static class PanelWin {
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out PanelRect lpRect);
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PanelPlacement {
+        public int length;
+        public int flags;
+        public int showCmd;
+        public PanelPoint minPosition;
+        public PanelPoint maxPosition;
+        public PanelRect normalPosition;
+    }
+    [DllImport("user32.dll")] public static extern bool SetWindowPlacement(IntPtr hWnd, ref PanelPlacement lpwndpl);
     [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr hWnd, ref PanelPoint lpPoint);
     [DllImport("user32.dll")] public static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
@@ -50,12 +61,26 @@ public static class PanelWin {
         PanelRect window;
         return GetWindowRect(hwnd, out window);
     }
+    public static string RectOf(IntPtr hwnd) {
+        PanelRect window;
+        if (!GetWindowRect(hwnd, out window)) return "unread";
+        return window.Left + "," + window.Top + " " + (window.Right - window.Left) + "x" + (window.Bottom - window.Top);
+    }
     public static void Place(IntPtr hwnd, int x, int y, int w, int h) {
+        ShowWindow(hwnd, 9);
         int ex = GetWindowLong32(hwnd, -20);
         if ((ex & 0x00000008) != 0) {
             ex &= ~0x00000008;
             SetWindowLong32(hwnd, -20, ex);
         }
+        PanelPlacement placement = new PanelPlacement();
+        placement.length = Marshal.SizeOf(typeof(PanelPlacement));
+        placement.showCmd = 1;
+        placement.normalPosition.Left = x;
+        placement.normalPosition.Top = y;
+        placement.normalPosition.Right = x + w;
+        placement.normalPosition.Bottom = y + h;
+        SetWindowPlacement(hwnd, ref placement);
         SetWindowPos(hwnd, new IntPtr(-2), x, y, w, h, 0x0020 | 0x0040);
     }
 }
@@ -236,6 +261,9 @@ while ((Get-Date) -lt $holdUntil) {
         }
     }
     Start-Sleep -Milliseconds 400
+}
+foreach ($item in $opened) {
+    Write-Output ("At " + $item.X + "," + $item.Y + " " + $item.W + "x" + $item.H + " -> " + [PanelWin]::RectOf($item.Hwnd))
 }
 Write-Output "Opened $($opened.Count) pages in your normal Edge profile. Edge-Close.bat closes only these windows."
 exit 0
