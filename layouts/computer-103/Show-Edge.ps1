@@ -176,7 +176,7 @@ public static class PanelWin {
             if (right < 0) right = 0;
             if (bottom < 0) bottom = 0;
         }
-        if (top > 8) top = 8;
+        if (top < 40) top = 40;
         int hostW = w + left + right;
         int hostH = h + top + bottom;
         SetWindowPos(host, new IntPtr(-2), x - left, y - top, hostW, hostH, 0x0020 | 0x0040);
