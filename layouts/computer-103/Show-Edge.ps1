@@ -154,9 +154,28 @@ public static class PanelWin {
         int style = GetWindowLong32(hwnd, -16);
         style &= ~0x00C00000;
         style &= ~0x00040000;
+        style &= ~0x00080000;
+        style &= ~0x00020000;
+        style &= ~0x00010000;
+        style &= ~0x00800000;
+        style |= 0x10000000;
+        if (h >= 1080) {
+            style &= ~0x40000000;
+            style |= unchecked((int)0x80000000);
+            SetWindowLong32(hwnd, -16, style);
+            int ex = GetWindowLong32(hwnd, -20);
+            ex &= ~0x00000100;
+            ex &= ~0x00000200;
+            ex &= ~0x00000001;
+            ex &= ~0x00020000;
+            SetWindowLong32(hwnd, -20, ex);
+            SetParent(hwnd, IntPtr.Zero);
+            ShowWindow(host, 0);
+            SetWindowPos(hwnd, new IntPtr(-2), x, y, w, h, 0x0020 | 0x0040);
+            return;
+        }
         style &= ~unchecked((int)0x80000000);
         style |= 0x40000000;
-        style |= 0x10000000;
         SetWindowLong32(hwnd, -16, style);
         SetParent(hwnd, host);
         PanelRect window;
@@ -178,12 +197,7 @@ public static class PanelWin {
             if (right < 0) right = 0;
             if (bottom < 0) bottom = 0;
         }
-        if (h >= 1080) {
-            if (top < 36) top = 36;
-            SetWindowPos(host, new IntPtr(-2), x, y, w, h, 0x0040);
-            SetWindowRgn(host, IntPtr.Zero, true);
-            MoveWindow(hwnd, -left, -top, w + left + right, h + top + bottom, true);
-        } else if (top < 40) top = 40;
+        if (top < 40) top = 40;
         if (h < 1080) {
             int hostW = w + left + right;
             int hostH = h + top + bottom;
