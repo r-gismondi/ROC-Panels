@@ -170,7 +170,7 @@ public static class PanelWin {
             ex &= ~0x00000001;
             ex &= ~0x00020000;
             SetWindowLong32(hwnd, -20, ex);
-            SetWindowLong32(hwnd, -16, 0x80000000 | 0x10000000 | 0x04000000);
+            SetWindowLong32(hwnd, -16, unchecked((int)0x80000000) | 0x10000000 | 0x04000000);
             SetParent(hwnd, IntPtr.Zero);
             ShowWindow(host, 0);
             SetWindowTheme(hwnd, " ", " ");
