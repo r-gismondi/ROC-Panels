@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { Slider } from "@/components/ui/slider"
 
-type PanelId = 1 | 2 | 3
+type PanelId = 1 | 2
 
 type Screen = { id: string; hdmi: string }
 
@@ -28,7 +28,7 @@ const PANEL_1: Screen[][] = [
   ],
 ]
 
-const PANEL_2: Screen[][] = [
+const COMPUTER_2: Screen[][] = [
   [
     { id: "TV9", hdmi: "HDMI 1" },
     { id: "TV10", hdmi: "HDMI 1" },
@@ -43,10 +43,13 @@ const PANEL_2: Screen[][] = [
   ],
 ]
 
-const PANEL_3: Screen[][] = [
+const COMPUTER_3: Screen[][] = [
   [{ id: "TV13", hdmi: "HDMI 1" }],
   [{ id: "TV18", hdmi: "HDMI 2" }],
 ]
+
+const COMPUTER_2_IDS = COMPUTER_2.flat().map((screen) => screen.id)
+const COMPUTER_3_IDS = COMPUTER_3.flat().map((screen) => screen.id)
 
 function groups(ids: string[], buckets: string[][]): Record<string, number> {
   const map: Record<string, number> = {}
@@ -59,11 +62,10 @@ function groups(ids: string[], buckets: string[][]): Record<string, number> {
 
 const IDS: Record<PanelId, string[]> = {
   1: PANEL_1.flat().map((screen) => screen.id),
-  2: PANEL_2.flat().map((screen) => screen.id),
-  3: PANEL_3.flat().map((screen) => screen.id),
+  2: [...COMPUTER_2_IDS, ...COMPUTER_3_IDS],
 }
 
-const SCREENS = [...PANEL_1.flat(), ...PANEL_2.flat(), ...PANEL_3.flat()]
+const SCREENS = [...PANEL_1.flat(), ...COMPUTER_2.flat(), ...COMPUTER_3.flat()]
 
 function initialPower() {
   return Object.fromEntries(SCREENS.map((screen) => [screen.id, true]))
@@ -94,22 +96,33 @@ const PRESETS: Record<PanelId, Preset[]> = {
       name: "Focus split",
       groups: groups(IDS[2], [["TV9"], ["TV14"], ["TV10", "TV11", "TV15", "TV16"], ["TV12"], ["TV17"]]),
     },
-    { id: "full", name: "Full", groups: groups(IDS[2], [IDS[2]]) },
-  ],
-  3: [
-    { id: "independent", name: "Independent", groups: groups(IDS[3], [["TV13"], ["TV18"]]) },
-    { id: "full", name: "Full", groups: groups(IDS[3], [IDS[3]]) },
+    { id: "full", name: "Full", groups: groups(IDS[2], [COMPUTER_2_IDS]) },
   ],
 }
 
+const COMPUTER_3_PRESETS: Preset[] = [
+  { id: "independent", name: "Independent", groups: groups(COMPUTER_3_IDS, [["TV13"], ["TV18"]]) },
+  { id: "full", name: "Full", groups: groups(COMPUTER_3_IDS, [COMPUTER_3_IDS]) },
+]
+
 export function WallConsole() {
   const [selection, setSelection] = useState<Selection>({ panel: 1, screen: "all" })
-  const [preset, setPreset] = useState<Record<PanelId, string>>({ 1: "focus", 2: "focus", 3: "independent" })
+  const [preset, setPreset] = useState<Record<PanelId, string>>({ 1: "focus", 2: "focus" })
+  const [computer3Preset, setComputer3Preset] = useState("independent")
   const [power, setPower] = useState<Record<string, boolean>>(initialPower)
   const [brightness, setBrightness] = useState<Record<string, number>>(initialBrightness)
 
   const panel = selection.panel
-  const targets = selection.screen === "all" ? IDS[panel] : [selection.screen]
+  const computer3Scope = selection.panel === 2 && (selection.screen === "computer-3" || COMPUTER_3_IDS.includes(selection.screen))
+  const computer2Scope = selection.panel === 2 && (selection.screen === "computer-2" || COMPUTER_2_IDS.includes(selection.screen))
+  const targets =
+    selection.screen === "all"
+      ? IDS[panel]
+      : selection.screen === "computer-2"
+        ? COMPUTER_2_IDS
+        : selection.screen === "computer-3"
+          ? COMPUTER_3_IDS
+          : [selection.screen]
   const allOn = targets.every((id) => power[id])
   const allOff = targets.every((id) => !power[id])
   const brightnessValues = targets.map((id) => brightness[id])
@@ -117,8 +130,34 @@ export function WallConsole() {
   const shownBrightness = sameBrightness
     ? brightnessValues[0]
     : Math.round(brightnessValues.reduce((sum, value) => sum + value, 0) / brightnessValues.length)
-  const activePreset = PRESETS[panel].find((item) => item.id === preset[panel]) ?? PRESETS[panel][0]
-  const current = selection.screen === "all" ? null : SCREENS.find((screen) => screen.id === selection.screen)
+  const computer2Preset = PRESETS[2].find((item) => item.id === preset[2]) ?? PRESETS[2][0]
+  const activeComputer3Preset = COMPUTER_3_PRESETS.find((item) => item.id === computer3Preset) ?? COMPUTER_3_PRESETS[0]
+  const activePreset = computer3Scope ? activeComputer3Preset : PRESETS[panel].find((item) => item.id === preset[panel]) ?? PRESETS[panel][0]
+  const current = SCREENS.find((screen) => screen.id === selection.screen)
+  const scopeLabel =
+    selection.screen === "all"
+      ? "WHOLE PANEL"
+      : selection.screen === "computer-2"
+        ? "COMPUTER 2"
+        : selection.screen === "computer-3"
+          ? "COMPUTER 3"
+          : "ONE SCREEN"
+  const scopeTitle =
+    selection.screen === "all"
+      ? `Panel ${panel}`
+      : selection.screen === "computer-2"
+        ? "Computer 2"
+        : selection.screen === "computer-3"
+          ? "Computer 3"
+          : current?.id
+  const scopeDetail =
+    selection.screen === "all"
+      ? `All ${targets.length} screens. Tap one screen to adjust it alone.`
+      : selection.screen === "computer-2"
+        ? "Screens 9–12 and 14–17 on 192.168.0.102. Tap the panel edge to adjust every screen on panel 2."
+        : selection.screen === "computer-3"
+          ? "Screens 13 and 18 on 192.168.0.103. Tap the panel edge to adjust every screen on panel 2."
+          : `${current?.hdmi}. Tap the panel around the screens to adjust all of them.`
 
   function applyPower(on: boolean) {
     setPower((currentPower) => {
@@ -153,7 +192,7 @@ export function WallConsole() {
         <p className="hidden text-xs tracking-[0.18em] text-cyan-100/70 sm:block">THIS STAND</p>
       </header>
 
-      <section className="grid flex-1 gap-4 px-4 py-4 lg:grid-cols-[1.2fr_0.8fr_1.35fr] lg:px-6">
+      <section className="grid flex-1 gap-4 px-4 py-4 lg:grid-cols-[1fr_0.72fr_1.55fr] lg:px-6">
         <PanelFrame
           panel={1}
           title="Panel 1"
@@ -165,20 +204,12 @@ export function WallConsole() {
           onSelect={setSelection}
         />
 
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4 self-start">
           <div className="flex flex-col justify-center gap-4 rounded-2xl border border-cyan-300/40 bg-[#0a2f86]/55 p-4 shadow-[0_0_28px_rgba(40,140,255,0.25)]">
             <div>
-              <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">
-                {selection.screen === "all" ? "WHOLE PANEL" : "ONE SCREEN"}
-              </p>
-              <h1 className="mt-1 text-3xl font-semibold tracking-wide">
-                {selection.screen === "all" ? `Panel ${panel}` : current?.id}
-              </h1>
-              <p className="mt-1 text-sm text-cyan-100/80">
-                {selection.screen === "all"
-                  ? `All ${targets.length} screens. Tap one screen to adjust it alone.`
-                  : `${current?.hdmi}. Tap the panel around the screens to adjust all of them.`}
-              </p>
+              <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{scopeLabel}</p>
+              <h1 className="mt-1 text-3xl font-semibold tracking-wide">{scopeTitle}</h1>
+              <p className="mt-1 text-sm text-cyan-100/80">{scopeDetail}</p>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -206,50 +237,85 @@ export function WallConsole() {
 
             <p className="text-xs leading-5 text-cyan-100/70">
               {allOn ? "Power on" : allOff ? "Power off" : "Power is mixed"} for{" "}
-              {selection.screen === "all" ? `panel ${panel}` : current?.id}. Nothing is sent to the displays yet.
+              {selection.screen === "all" ? `panel ${panel}` : scopeTitle}. Nothing is sent to the displays yet.
             </p>
           </div>
-
-          <PanelFrame
-            panel={3}
-            title="Panel 3"
-            detail="192.168.0.103"
-            rows={PANEL_3}
-            preset={PRESETS[3].find((item) => item.id === preset[3])!}
-            selection={selection}
-            power={power}
-            onSelect={setSelection}
-          />
         </div>
 
-        <PanelFrame
-          panel={2}
-          title="Panel 2"
-          detail="192.168.0.102"
-          rows={PANEL_2}
-          preset={PRESETS[2].find((item) => item.id === preset[2])!}
-          selection={selection}
-          power={power}
-          onSelect={setSelection}
-        />
+        <section
+          onClick={() => setSelection({ panel: 2, screen: "all" })}
+          className={`cursor-pointer rounded-2xl border bg-[#071a4d]/70 p-3 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
+            selection.panel === 2 && selection.screen === "all"
+              ? "border-white shadow-[0_0_24px_rgba(180,230,255,0.35)]"
+              : selection.panel === 2
+                ? "border-cyan-300/70"
+                : "border-cyan-300/25"
+          }`}
+        >
+          <div className="mb-3 flex items-end justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-semibold tracking-[0.16em] uppercase">Panel 2</h2>
+              <p className="text-xs text-cyan-100/70">Screens 9–18</p>
+            </div>
+            <span className="text-[11px] tracking-[0.14em] text-cyan-100/80">
+              {IDS[2].every((id) => power[id]) ? "ON" : IDS[2].every((id) => !power[id]) ? "OFF" : "MIXED"}
+            </span>
+          </div>
+          <div className="flex items-stretch gap-2">
+            <ComputerFrame
+              title="Computer 2"
+              detail="192.168.0.102"
+              rows={COMPUTER_2}
+              preset={computer2Preset}
+              selected={computer2Scope}
+              selection={selection}
+              power={power}
+              onSelectFrame={() => setSelection({ panel: 2, screen: "computer-2" })}
+              onSelectScreen={(screen) => setSelection({ panel: 2, screen })}
+            />
+            <ComputerFrame
+              title="Computer 3"
+              detail="192.168.0.103"
+              rows={COMPUTER_3}
+              preset={activeComputer3Preset}
+              selected={computer3Scope}
+              selection={selection}
+              power={power}
+              narrow
+              onSelectFrame={() => setSelection({ panel: 2, screen: "computer-3" })}
+              onSelectScreen={(screen) => setSelection({ panel: 2, screen })}
+            />
+          </div>
+        </section>
       </section>
 
       <footer className="border-t border-cyan-300/30 px-4 py-3 sm:px-6">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">PANEL {panel} PRESETS</p>
-          <p className="text-xs text-cyan-100/70">{activePreset.name}</p>
-        </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-          {PRESETS[panel].map((item) => (
-            <GlowButton
-              key={item.id}
-              active={item.id === preset[panel]}
-              onClick={() => setPreset((currentPreset) => ({ ...currentPreset, [panel]: item.id }))}
-            >
-              {item.name}
-            </GlowButton>
-          ))}
-        </div>
+        {panel === 1 ? (
+          <PresetRow
+            label="PANEL 1 PRESETS"
+            value={activePreset.name}
+            presets={PRESETS[1]}
+            activeId={preset[1]}
+            onSelect={(id) => setPreset((currentPreset) => ({ ...currentPreset, 1: id }))}
+          />
+        ) : (
+          <div className="flex flex-col gap-3">
+            <PresetRow
+              label="COMPUTER 2 · 192.168.0.102"
+              value={computer2Preset.name}
+              presets={PRESETS[2]}
+              activeId={preset[2]}
+              onSelect={(id) => setPreset((currentPreset) => ({ ...currentPreset, 2: id }))}
+            />
+            <PresetRow
+              label="COMPUTER 3 · 192.168.0.103"
+              value={activeComputer3Preset.name}
+              presets={COMPUTER_3_PRESETS}
+              activeId={computer3Preset}
+              onSelect={setComputer3Preset}
+            />
+          </div>
+        )}
       </footer>
     </main>
   )
@@ -325,6 +391,126 @@ function PanelFrame({
         ))}
       </div>
     </section>
+  )
+}
+
+function ComputerFrame({
+  title,
+  detail,
+  rows,
+  preset,
+  selected,
+  selection,
+  power,
+  narrow = false,
+  onSelectFrame,
+  onSelectScreen,
+}: {
+  title: string
+  detail: string
+  rows: Screen[][]
+  preset: Preset
+  selected: boolean
+  selection: Selection
+  power: Record<string, boolean>
+  narrow?: boolean
+  onSelectFrame: () => void
+  onSelectScreen: (screen: string) => void
+}) {
+  return (
+    <div
+      onClick={(event) => {
+        event.stopPropagation()
+        onSelectFrame()
+      }}
+      className={`rounded-xl border p-2 ${narrow ? "w-[5.4rem] shrink-0" : "min-w-0 flex-1"} ${
+        selected ? "border-white bg-white/5" : "border-cyan-300/35"
+      }`}
+    >
+      <p className="text-[10px] leading-tight font-semibold tracking-[0.12em] uppercase">{title}</p>
+      <p className="mb-2 text-[10px] leading-tight break-all text-cyan-100/70">{detail}</p>
+      <div className="flex flex-col gap-2">
+        {rows.map((row) => (
+          <div key={row[0].id} className="grid gap-2" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>
+            {row.map((screen) => (
+              <ScreenButton
+                key={screen.id}
+                screen={screen}
+                preset={preset}
+                selected={selection.screen === screen.id}
+                on={power[screen.id]}
+                onSelect={() => onSelectScreen(screen.id)}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ScreenButton({
+  screen,
+  preset,
+  selected,
+  on,
+  onSelect,
+}: {
+  screen: Screen
+  preset: Preset
+  selected: boolean
+  on: boolean
+  onSelect: () => void
+}) {
+  const group = preset.groups[screen.id] ?? 0
+  const color = GROUP_COLOR[group % GROUP_COLOR.length]
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation()
+        onSelect()
+      }}
+      className="min-h-16 rounded-lg border px-1 py-2 text-center transition"
+      style={{
+        borderColor: selected ? "#ffffff" : color,
+        background: on ? `${color}33` : "rgba(0,0,0,0.45)",
+        boxShadow: selected ? `0 0 16px ${color}` : undefined,
+      }}
+    >
+      <span className="block text-sm font-semibold">{screen.id.replace("TV", "")}</span>
+      <span className="block text-[10px] text-cyan-50/80">{screen.hdmi}</span>
+    </button>
+  )
+}
+
+function PresetRow({
+  label,
+  value,
+  presets,
+  activeId,
+  onSelect,
+}: {
+  label: string
+  value: string
+  presets: Preset[]
+  activeId: string
+  onSelect: (id: string) => void
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{label}</p>
+        <p className="text-xs text-cyan-100/70">{value}</p>
+      </div>
+      <div className={`grid grid-cols-2 gap-2 ${presets.length > 2 ? "sm:grid-cols-5" : "sm:grid-cols-2 sm:max-w-md"}`}>
+        {presets.map((item) => (
+          <GlowButton key={item.id} active={item.id === activeId} onClick={() => onSelect(item.id)}>
+            {item.name}
+          </GlowButton>
+        ))}
+      </div>
+    </div>
   )
 }
 
