@@ -178,16 +178,10 @@ public static class PanelWin {
             if (bottom < 0) bottom = 0;
         }
         if (h >= 1080) {
-            SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0, 0x0027);
+            if (top < 36) top = 36;
             SetWindowPos(host, new IntPtr(-2), x, y, w, h, 0x0040);
             SetWindowRgn(host, IntPtr.Zero, true);
-            MoveWindow(hwnd, 0, 0, w, h, true);
-            IntPtr page = PageWidget(hwnd);
-            if (page != IntPtr.Zero) {
-                PanelRect client;
-                GetClientRect(hwnd, out client);
-                MoveWindow(page, 0, 0, client.Right - client.Left, client.Bottom - client.Top, true);
-            }
+            MoveWindow(hwnd, -left, -top, w + left + right, h + top + bottom, true);
         } else if (top < 40) top = 40;
         if (h < 1080) {
             int hostW = w + left + right;
@@ -423,7 +417,7 @@ $timer.Add_Tick({
             [void][PanelWin]::Fit($item.Hwnd, $item.Host, $item.X, $item.Y, $item.W, $item.H)
         }
     }
-    if ($script:fitTicks -ge 12) { $timer.Stop() }
+    if ($script:fitTicks -ge 40) { $timer.Stop() }
 })
 $timer.Start()
 Write-Output "Opened $($opened.Count) pages. Leave this window open. Edge-Close.bat closes them."
