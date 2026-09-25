@@ -144,6 +144,29 @@ public static class PanelWin {
         SetWindowPos(hwnd, new IntPtr(-2), posX, posY, posW, posH, 0x0020 | 0x0040);
         SetWindowRgn(hwnd, CreateRectRgn(left, top, left + w, top + h), true);
     }
+    static System.Collections.Generic.Dictionary<IntPtr, IntPtr> OldProc = new System.Collections.Generic.Dictionary<IntPtr, IntPtr>();
+    static System.Collections.Generic.Dictionary<IntPtr, int[]> HostLock = new System.Collections.Generic.Dictionary<IntPtr, int[]>();
+    static WndProc HostDelegate;
+    delegate IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr")] static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr newProc);
+    [DllImport("user32.dll")] static extern IntPtr CallWindowProc(IntPtr prev, IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    static IntPtr HostProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam) {
+        if (msg == 0x0046 && HostLock.ContainsKey(hWnd)) {
+            int[] box = HostLock[hWnd];
+            int offset = IntPtr.Size * 2;
+            Marshal.WriteInt32(lParam, offset, box[0]);
+            Marshal.WriteInt32(lParam, offset + 4, box[1]);
+            Marshal.WriteInt32(lParam, offset + 8, box[2]);
+            Marshal.WriteInt32(lParam, offset + 12, box[3]);
+        }
+        return CallWindowProc(OldProc[hWnd], hWnd, msg, wParam, lParam);
+    }
+    public static void LockHost(IntPtr host, int x, int y, int w, int h) {
+        HostLock[host] = new int[] { x, y, w, h };
+        if (OldProc.ContainsKey(host)) return;
+        if (HostDelegate == null) HostDelegate = new WndProc(HostProc);
+        OldProc[host] = SetWindowLongPtr64(host, -4, Marshal.GetFunctionPointerForDelegate(HostDelegate));
+    }
     public static void PrepareHost(IntPtr host) {
         int style = GetWindowLong32(host, -16);
         style |= 0x02000000;
@@ -159,25 +182,6 @@ public static class PanelWin {
         style &= ~0x00010000;
         style &= ~0x00800000;
         style |= 0x10000000;
-        if (h >= 1080) {
-            style &= ~0x40000000;
-            style |= unchecked((int)0x80000000);
-            SetWindowLong32(hwnd, -16, style);
-            int ex = GetWindowLong32(hwnd, -20);
-            ex &= ~0x00000100;
-            ex &= ~0x00000200;
-            ex &= ~0x00000001;
-            ex &= ~0x00020000;
-            SetWindowLong32(hwnd, -20, ex);
-            SetWindowLong32(hwnd, -16, unchecked((int)0x80000000) | 0x10000000 | 0x04000000);
-            SetParent(hwnd, IntPtr.Zero);
-            ShowWindow(host, 0);
-            SetWindowTheme(hwnd, " ", " ");
-            SetWindowPos(hwnd, new IntPtr(-2), x, y, w, h, 0x0020 | 0x0040);
-            IntPtr page = PageWidget(hwnd);
-            if (page != IntPtr.Zero) MoveWindow(page, 0, 0, w, h, true);
-            return;
-        }
         style &= ~unchecked((int)0x80000000);
         style |= 0x40000000;
         SetWindowLong32(hwnd, -16, style);
@@ -201,14 +205,16 @@ public static class PanelWin {
             if (right < 0) right = 0;
             if (bottom < 0) bottom = 0;
         }
-        if (top < 40) top = 40;
-        if (h < 1080) {
-            int hostW = w + left + right;
-            int hostH = h + top + bottom;
-            SetWindowPos(host, new IntPtr(-2), x - left, y - top, hostW, hostH, 0x0040);
-            SetWindowRgn(host, CreateRectRgn(left, top, left + w, top + h), true);
-            MoveWindow(hwnd, 0, 0, hostW, hostH, true);
-        }
+        if (h >= 1080) top = 48;
+        else if (top < 40) top = 40;
+        int hostW = w + left + right;
+        int hostH = h + top + bottom;
+        int hostX = x - left;
+        int hostY = y - top;
+        if (h >= 1080) LockHost(host, hostX, hostY, hostW, hostH);
+        SetWindowPos(host, new IntPtr(-2), hostX, hostY, hostW, hostH, 0x0040);
+        SetWindowRgn(host, CreateRectRgn(left, top, left + w, top + h), true);
+        MoveWindow(hwnd, 0, 0, hostW, hostH, true);
     }
 }
 "@
