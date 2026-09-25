@@ -21,6 +21,7 @@ public static class PanelWin {
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)] public static extern int SetWindowTheme(IntPtr hwnd, string subApp, string subId);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr child, string cls, string title);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out PanelRect lpRect);
@@ -169,9 +170,13 @@ public static class PanelWin {
             ex &= ~0x00000001;
             ex &= ~0x00020000;
             SetWindowLong32(hwnd, -20, ex);
+            SetWindowLong32(hwnd, -16, 0x80000000 | 0x10000000 | 0x04000000);
             SetParent(hwnd, IntPtr.Zero);
             ShowWindow(host, 0);
+            SetWindowTheme(hwnd, " ", " ");
             SetWindowPos(hwnd, new IntPtr(-2), x, y, w, h, 0x0020 | 0x0040);
+            IntPtr page = PageWidget(hwnd);
+            if (page != IntPtr.Zero) MoveWindow(page, 0, 0, w, h, true);
             return;
         }
         style &= ~unchecked((int)0x80000000);
@@ -401,16 +406,13 @@ foreach ($item in $opened) {
     })
 }
 $timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 500
-$script:fitTicks = 0
+$timer.Interval = 300
 $timer.Add_Tick({
-    $script:fitTicks += 1
     foreach ($item in $opened) {
-        if ([PanelWin]::IsWindow($item.Hwnd)) {
+        if ($item.H -ge 1080 -and [PanelWin]::IsWindow($item.Hwnd)) {
             [void][PanelWin]::Fit($item.Hwnd, $item.Host, $item.X, $item.Y, $item.W, $item.H)
         }
     }
-    if ($script:fitTicks -ge 40) { $timer.Stop() }
 })
 $timer.Start()
 Write-Output "Opened $($opened.Count) pages. Leave this window open. Edge-Close.bat closes them."
