@@ -225,3 +225,83 @@ export async function launchLayout(computer: string, preset: string): Promise<La
 function psString(value: string) {
   return `'${value.replaceAll("'", "''")}'`
 }
+
+const ADDRESS_SCREENS: Record<string, string[]> = {
+  "101": ["TV1", "TV2", "TV3", "TV4", "TV5", "TV6", "TV7", "TV8"],
+  "102": ["TV9", "TV10", "TV11", "TV12", "TV14", "TV15", "TV16", "TV17"],
+  "103": ["TV13", "TV18"],
+}
+
+function validAddress(url: string) {
+  return /^https?:\/\/[^\s"'<>\\]+$/.test(url) && url.length <= 2000
+}
+
+export function readAddresses(computer: string) {
+  const host = HOSTS[computer]
+  const screens = ADDRESS_SCREENS[computer]
+  const found: Record<string, string> = {}
+  if (!host || !screens) return found
+  const dir = path.join(layoutsRoot(host), `computer-${computer}`, "addresses")
+  for (const screen of screens) {
+    try {
+      const text = fs.readFileSync(path.join(dir, `${screen}.txt`), "utf8").trim()
+      if (validAddress(text)) found[screen] = text
+    } catch {
+      // This screen is still on the landing page.
+    }
+  }
+  return found
+}
+
+export async function setLayoutAddress(computer: string, screen: string, url: string): Promise<LaunchResult> {
+  const host = HOSTS[computer]
+  const screens = ADDRESS_SCREENS[computer]
+  if (!host || !screens || !screens.includes(screen) || !validAddress(url)) {
+    return { ok: false, message: "Use an http or https address on a screen of that computer." }
+  }
+  if (process.platform !== "win32") {
+    return { ok: false, message: "Run this page on a Windows computer on the wall network." }
+  }
+  const root = path.join(layoutsRoot(host), `computer-${computer}`)
+  const requests = path.join(root, "url-requests")
+  const results = path.join(root, "url-results")
+  const resultFile = path.join(results, `${screen}.txt`)
+  const requestFile = path.join(requests, `${screen}.txt`)
+  try {
+    fs.mkdirSync(requests, { recursive: true })
+    fs.mkdirSync(results, { recursive: true })
+    fs.rmSync(resultFile, { force: true })
+    fs.writeFileSync(`${requestFile}.tmp`, url, "utf8")
+    fs.renameSync(`${requestFile}.tmp`, requestFile)
+  } catch {
+    return { ok: false, message: `Could not reach the layout on ${host}.` }
+  }
+  const started = Date.now()
+  let sawWorking = false
+  while (Date.now() - started < 20000) {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    let text = ""
+    try {
+      text = fs.readFileSync(resultFile, "utf8").trim()
+    } catch {
+      text = ""
+    }
+    if (!text) {
+      if (!sawWorking && Date.now() - started > 2500) {
+        return { ok: false, message: `Confirm a layout on ${host}, then set the address.` }
+      }
+      continue
+    }
+    if (text === "working") {
+      sawWorking = true
+      continue
+    }
+    if (text === "ok") {
+      const number = screen.replace("TV", "")
+      return { ok: true, message: `Screen ${number} on ${host} now shows ${url}.` }
+    }
+    if (text.startsWith("error ")) return { ok: false, message: text.slice(6) }
+    return { ok: false, message: "The screen did not open that address." }
+  }
+  return { ok: false, message: "The screen did not open that address." }
+}

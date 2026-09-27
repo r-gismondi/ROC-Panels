@@ -105,6 +105,32 @@ const COMPUTER_3_PRESETS: Preset[] = [
   { id: "full", name: "Full", groups: groups(COMPUTER_3_IDS, [COMPUTER_3_IDS]) },
 ]
 
+const DEFAULT_URL = "https://ccv2.mtllc.us/landing"
+
+const COMPUTER_OF: Record<string, "101" | "102" | "103"> = {}
+for (const id of IDS[1]) COMPUTER_OF[id] = "101"
+for (const id of COMPUTER_2_IDS) COMPUTER_OF[id] = "102"
+for (const id of COMPUTER_3_IDS) COMPUTER_OF[id] = "103"
+
+function screenNumber(id: string) {
+  return id.replace("TV", "")
+}
+
+function zoneDetail(ids: string[]) {
+  const nums = ids.map(screenNumber)
+  if (nums.length <= 1) return `Screen ${nums[0] ?? ""} has its own window.`
+  if (nums.length === 2) return `Screens ${nums[0]} and ${nums[1]} share this window. The address updates both.`
+  const last = nums[nums.length - 1]
+  return `Screens ${nums.slice(0, -1).join(", ")} and ${last} share this window. The address updates all of them.`
+}
+
+function normalizeUrl(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return ""
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  return `https://${trimmed}`
+}
+
 export function WallConsole() {
   const [selection, setSelection] = useState<Selection>({ panel: 1, screen: "all" })
   const [preset, setPreset] = useState<Record<PanelId, string>>({ 1: "focus", 2: "focus" })
@@ -114,6 +140,9 @@ export function WallConsole() {
   const [power, setPower] = useState<Record<string, boolean>>(initialPower)
   const [brightness, setBrightness] = useState<Record<string, number>>(initialBrightness)
   const [layoutStatus, setLayoutStatus] = useState("Preset buttons preview the layout here. Confirm opens Edge on that computer.")
+  const [addresses, setAddresses] = useState<Record<string, string>>({})
+  const [keyboardOpen, setKeyboardOpen] = useState(false)
+  const [replaceAddress, setReplaceAddress] = useState(false)
   const layoutBusy = useRef(false)
   const controlRef = useRef<HTMLDivElement>(null)
   const [controlHeight, setControlHeight] = useState<number>()
@@ -126,6 +155,31 @@ export function WallConsole() {
     const observer = new ResizeObserver(measure)
     observer.observe(control)
     return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    if (!SCREENS.some((screen) => screen.id === selection.screen)) setKeyboardOpen(false)
+    else setReplaceAddress(true)
+  }, [selection])
+
+  useEffect(() => {
+    let cancel = false
+    void (async () => {
+      const next: Record<string, string> = {}
+      for (const computer of ["101", "102", "103"]) {
+        try {
+          const response = await fetch(`/api/address?computer=${computer}`)
+          const body = (await response.json()) as { addresses?: Record<string, string> }
+          Object.assign(next, body.addresses ?? {})
+        } catch {
+          // The field keeps the landing page until a screen is opened.
+        }
+      }
+      if (!cancel) setAddresses((existing) => ({ ...next, ...existing }))
+    })()
+    return () => {
+      cancel = true
+    }
   }, [])
 
   const panel = selection.panel
@@ -229,6 +283,92 @@ export function WallConsole() {
     }
   }
 
+  const addressComputer = current ? COMPUTER_OF[current.id] : null
+  const addressPreset =
+    addressComputer === "103"
+      ? COMPUTER_3_PRESETS.find((item) => item.id === computer3Applied) ?? COMPUTER_3_PRESETS[0]
+      : addressComputer === "101"
+        ? PRESETS[1].find((item) => item.id === applied[1]) ?? PRESETS[1][0]
+        : PRESETS[2].find((item) => item.id === applied[2]) ?? PRESETS[2][0]
+  const addressIds = addressComputer === "103" ? COMPUTER_3_IDS : addressComputer === "101" ? IDS[1] : COMPUTER_2_IDS
+  const zoneIds = current ? addressIds.filter((id) => addressPreset.groups[id] === addressPreset.groups[current.id]) : []
+  const shownZone = zoneIds.length > 0 ? zoneIds : current ? [current.id] : []
+  const addressValue = current ? addresses[current.id] ?? DEFAULT_URL : DEFAULT_URL
+  const previewPending = footer.activeId !== footer.appliedId
+
+  function insertAddress(token: string) {
+    if (!current) return
+    const id = current.id
+    setAddresses((existing) => {
+      const value = existing[id] ?? DEFAULT_URL
+      const base = replaceAddress ? "" : value
+      return { ...existing, [id]: base + token }
+    })
+    setReplaceAddress(false)
+  }
+
+  function insertScheme() {
+    if (!current) return
+    const id = current.id
+    setAddresses((existing) => {
+      const value = existing[id] ?? DEFAULT_URL
+      if (replaceAddress || value.trim() === "") return { ...existing, [id]: "https://" }
+      if (/^https?:\/\//i.test(value)) return existing
+      return { ...existing, [id]: `https://${value}` }
+    })
+    setReplaceAddress(false)
+  }
+
+  function backspaceAddress() {
+    if (!current) return
+    const id = current.id
+    setAddresses((existing) => {
+      const value = existing[id] ?? DEFAULT_URL
+      return { ...existing, [id]: replaceAddress ? "" : value.slice(0, -1) }
+    })
+    setReplaceAddress(false)
+  }
+
+  function clearAddress() {
+    if (!current) return
+    const id = current.id
+    setAddresses((existing) => ({ ...existing, [id]: "" }))
+    setReplaceAddress(false)
+  }
+
+  async function runAddress() {
+    if (!current || !addressComputer) return
+    if (layoutBusy.current) return
+    if (previewPending) {
+      setLayoutStatus(`Confirm the layout preview on ${footer.target}, then set the address.`)
+      return
+    }
+    const url = normalizeUrl(addresses[current.id] ?? DEFAULT_URL)
+    if (!/^https?:\/\/\S+$/.test(url) || /[\s"'<>\\]/.test(url)) {
+      setLayoutStatus("Type a full address, such as https://example.com.")
+      setKeyboardOpen(true)
+      return
+    }
+    setAddresses((existing) => ({ ...existing, [current.id]: url }))
+    layoutBusy.current = true
+    const label = shownZone.length > 1 ? `screens ${shownZone.map(screenNumber).join(", ")}` : `screen ${screenNumber(current.id)}`
+    setLayoutStatus(`Opening the address on ${label}…`)
+    try {
+      const response = await fetch("/api/address", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ computer: addressComputer, screen: current.id, url }),
+      })
+      const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null
+      setLayoutStatus(body?.message || body?.error || "The address did not open.")
+      if (response.ok) setKeyboardOpen(false)
+    } catch {
+      setLayoutStatus("Could not reach the layout service.")
+    } finally {
+      layoutBusy.current = false
+    }
+  }
+
   return (
     <main className="flex min-h-svh flex-col bg-[radial-gradient(circle_at_top,#1650c8_0%,#06215f_42%,#03102e_100%)] text-white">
       <header className="flex items-center justify-between gap-4 border-b border-cyan-300/30 px-4 py-3 sm:px-6">
@@ -284,6 +424,36 @@ export function WallConsole() {
                 aria-label="Brightness"
               />
             </div>
+
+            {current ? (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">ADDRESS</p>
+                  <p className="text-[11px] text-cyan-100/70">Screen {screenNumber(current.id)}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setKeyboardOpen(true)
+                    setReplaceAddress(true)
+                  }}
+                  className={`min-h-16 rounded-lg border px-3 py-2 text-left ${
+                    keyboardOpen && replaceAddress ? "border-white bg-white/10" : "border-cyan-300/40 bg-[#08245f]/80"
+                  }`}
+                >
+                  <span className="block break-all font-mono text-sm leading-5">{addressValue || "Tap to type an address"}</span>
+                </button>
+                <p className="text-xs leading-5 text-cyan-100/80">
+                  {zoneDetail(shownZone)}
+                  {previewPending ? " Confirm the layout preview, then set the address." : ""}
+                </p>
+                <GlowButton active onClick={() => void runAddress()}>
+                  Open address
+                </GlowButton>
+              </div>
+            ) : (
+              <p className="text-xs leading-5 text-cyan-100/80">Tap one screen to type its address.</p>
+            )}
 
             <p className="text-xs leading-5 text-cyan-100/70">
               {allOn ? "Power on" : allOff ? "Power off" : "Power is mixed"} for{" "}
@@ -378,6 +548,20 @@ export function WallConsole() {
           }}
         />
       </footer>
+      {keyboardOpen && current ? (
+        <AddressKeyboard
+          label={`Screen ${screenNumber(current.id)}`}
+          value={addressValue}
+          selected={replaceAddress}
+          detail={zoneDetail(shownZone)}
+          onInsert={insertAddress}
+          onScheme={insertScheme}
+          onBackspace={backspaceAddress}
+          onClear={clearAddress}
+          onOpen={() => void runAddress()}
+          onClose={() => setKeyboardOpen(false)}
+        />
+      ) : null}
     </main>
   )
 }
@@ -594,6 +778,95 @@ function PresetRow({
         </div>
       ) : null}
     </div>
+  )
+}
+
+const ADDRESS_KEYS = [
+  ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
+  ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
+  ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
+  ["z", "x", "c", "v", "b", "n", "m", ".", "-", "_"],
+]
+
+function AddressKeyboard({
+  label,
+  value,
+  selected,
+  detail,
+  onInsert,
+  onScheme,
+  onBackspace,
+  onClear,
+  onOpen,
+  onClose,
+}: {
+  label: string
+  value: string
+  selected: boolean
+  detail: string
+  onInsert: (token: string) => void
+  onScheme: () => void
+  onBackspace: () => void
+  onClear: () => void
+  onOpen: () => void
+  onClose: () => void
+}) {
+  const shortcuts = ["https://", "www.", "/", ":", ".com", "?", "&", "=", "#", "%"]
+  return (
+    <div className="fixed inset-x-0 bottom-0 z-40 max-h-[70vh] overflow-y-auto border-t border-cyan-300/40 bg-[#03102e]/95 p-3 shadow-[0_-12px_40px_rgba(0,0,0,0.45)] select-none">
+      <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-2">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{label}</p>
+          <p className="text-xs text-cyan-100/70">{detail}</p>
+        </div>
+        <div className={`min-h-12 rounded-lg border px-3 py-2 ${selected ? "border-white bg-white/10" : "border-cyan-300/40 bg-[#08245f]/80"}`}>
+          <p className="break-all font-mono text-base leading-6">{value || " "}</p>
+        </div>
+        {selected ? <p className="text-xs text-cyan-100/70">The address is selected. The next key replaces it.</p> : null}
+        {ADDRESS_KEYS.map((row) => (
+          <div key={row.join("")} className="flex gap-2">
+            {row.map((key) => (
+              <KeyButton key={key} onClick={() => onInsert(key)}>
+                {key}
+              </KeyButton>
+            ))}
+          </div>
+        ))}
+        <div className="flex gap-2">
+          {shortcuts.map((key) => (
+            <KeyButton key={key} onClick={() => (key === "https://" ? onScheme() : onInsert(key))}>
+              {key}
+            </KeyButton>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <KeyButton onClick={onClear}>Clear</KeyButton>
+          <KeyButton onClick={onBackspace}>Backspace</KeyButton>
+        </div>
+        <div className="grid grid-cols-[2fr_1fr] gap-2">
+          <button
+            type="button"
+            onClick={onOpen}
+            className="min-h-14 rounded-lg border border-cyan-200 bg-cyan-400/25 text-base tracking-wide shadow-[0_0_16px_rgba(80,200,255,0.35)]"
+          >
+            Open address
+          </button>
+          <KeyButton onClick={onClose}>Hide keyboard</KeyButton>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function KeyButton({ children, onClick }: { children: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="min-h-14 flex-1 rounded-lg border border-cyan-300/40 bg-[#08245f] px-2 text-lg tracking-wide touch-manipulation"
+    >
+      {children}
+    </button>
   )
 }
 

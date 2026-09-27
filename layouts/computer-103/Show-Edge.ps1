@@ -10,6 +10,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $HomeUrl = "https://ccv2.mtllc.us/landing"
+$LayoutScreens = @("TV13", "TV18")
 
 if (-not ("PanelWin" -as [type])) {
     $panelDll = "C:\layouts\PanelWin.dll"
@@ -241,6 +242,29 @@ function Find-Edge {
     return $null
 }
 
+function Get-ZoneUrl([string]$Title) {
+    if (-not $root) { return $HomeUrl }
+    $dir = Join-Path $root "addresses"
+    $names = @($Title -split '\s+' | Where-Object { $_ -and $_ -ne "All" })
+    if ($Title -eq "All" -and $LayoutScreens) { $names = @($LayoutScreens) }
+    $best = ""
+    $bestTime = [datetime]::MinValue
+    foreach ($name in $names) {
+        $file = Join-Path $dir "$name.txt"
+        if (-not (Test-Path -LiteralPath $file)) { continue }
+        $item = Get-Item -LiteralPath $file
+        if ($item.LastWriteTime -lt $bestTime) { continue }
+        $text = ""
+        try { $text = ([System.IO.File]::ReadAllText($file)).Trim() } catch { continue }
+        if ($text -match '^https?://\S+$') {
+            $best = $text
+            $bestTime = $item.LastWriteTime
+        }
+    }
+    if ($best) { return $best }
+    return $HomeUrl
+}
+
 function Write-Utf8NoBom([string]$Path, [string]$Text) {
     $utf8 = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllText($Path, $Text, $utf8)
@@ -391,7 +415,8 @@ foreach ($zone in $presets[$Preset]) {
     Write-Output "Opening $($zone.Title)"
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
-    $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --app=`"$HomeUrl`" --new-window"
+    $zoneUrl = Get-ZoneUrl $zone.Title
+    $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --app=`"$zoneUrl`" --new-window"
     $startInfo.UseShellExecute = $true
     $started = New-Object System.Diagnostics.Process
     $started.StartInfo = $startInfo
@@ -414,7 +439,7 @@ foreach ($zone in $presets[$Preset]) {
     }
     [void][PanelWin]::Place($hwnd, $zone.X, $zone.Y, $drawW, $drawH)
     Add-Content -Path $hwndFile -Value $hwnd.ToInt64() -Encoding Ascii
-    $opened += [pscustomobject]@{ Hwnd = $hwnd; X = $zone.X; Y = $zone.Y; W = $drawW; H = $drawH }
+    $opened += [pscustomobject]@{ Title = $zone.Title; Hwnd = $hwnd; X = $zone.X; Y = $zone.Y; W = $drawW; H = $drawH }
     Write-Output "Placed $($zone.Title)"
     Start-Sleep -Milliseconds 150
 }
@@ -458,6 +483,100 @@ $timer.Add_Tick({
     if ($script:fitPasses -ge 3) { $timer.Stop() }
 })
 $timer.Start()
+$script:urlBusy = $false
+New-Item -ItemType Directory -Force -Path (Join-Path $root "url-requests") | Out-Null
+$urlTimer = New-Object System.Windows.Forms.Timer
+$urlTimer.Interval = 200
+$urlTimer.Add_Tick({
+    if ($script:urlBusy) { return }
+    try {
+        $dir = Join-Path $root "url-requests"
+        $pending = @(Get-ChildItem -LiteralPath $dir -Filter *.txt -ErrorAction SilentlyContinue | Sort-Object Name)
+        if ($pending.Count -eq 0) { return }
+        $request = $pending[0]
+        $screen = [System.IO.Path]::GetFileNameWithoutExtension($request.Name)
+        $resultDir = Join-Path $root "url-results"
+        New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+        $resultPath = Join-Path $resultDir ($screen + ".txt")
+        $url = ""
+        try { $url = ([System.IO.File]::ReadAllText($request.FullName)).Trim() } catch { return }
+        Remove-Item -LiteralPath $request.FullName -Force -ErrorAction SilentlyContinue
+        $script:urlBusy = $true
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        try {
+            $validScreen = $screen -match '^TV([1-9]|1[0-8])$'
+            $validUrl = ($url.StartsWith("http://") -or $url.StartsWith("https://")) -and $url.Length -le 2000 -and $url -notmatch '[\s''"<>\\]'
+            if (-not $validScreen) {
+                [System.IO.File]::WriteAllText($resultPath, "error That screen is not on this computer.", $utf8)
+                return
+            }
+            if (-not $validUrl) {
+                [System.IO.File]::WriteAllText($resultPath, "error Use an http or https address.", $utf8)
+                return
+            }
+            $match = $null
+            foreach ($item in $opened) {
+                $names = @($item.Title -split '\s+')
+                if ($item.Title -eq "All" -or ($names -contains $screen)) {
+                    $match = $item
+                    break
+                }
+            }
+            if (-not $match) {
+                [System.IO.File]::WriteAllText($resultPath, "error That screen is not open in this layout.", $utf8)
+                return
+            }
+            [System.IO.File]::WriteAllText($resultPath, "working", $utf8)
+            $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $startInfo.FileName = $edge
+            $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --app=`"$url`" --new-window"
+            $startInfo.UseShellExecute = $true
+            $started = New-Object System.Diagnostics.Process
+            $started.StartInfo = $startInfo
+            [void]$started.Start()
+            $hwnd = [IntPtr]::Zero
+            $deadline = (Get-Date).AddSeconds(25)
+            while ((Get-Date) -lt $deadline -and $hwnd -eq [IntPtr]::Zero) {
+                Start-Sleep -Milliseconds 300
+                foreach ($candidate in @(Get-EdgeHwnds)) {
+                    if (-not $known.ContainsKey($candidate.ToInt64())) {
+                        $hwnd = $candidate
+                        $known[$candidate.ToInt64()] = $true
+                        break
+                    }
+                }
+            }
+            if ($hwnd -eq [IntPtr]::Zero) {
+                [System.IO.File]::WriteAllText($resultPath, "error Edge did not open that address.", $utf8)
+                return
+            }
+            [void][PanelWin]::Place($hwnd, $match.X, $match.Y, $match.W, $match.H)
+            [void][PanelWin]::Fit($hwnd, $match.Host, $match.X, $match.Y, $match.W, $match.H)
+            [void][PanelWin]::CloseWindow($match.Hwnd)
+            [void]$known.Remove($match.Hwnd.ToInt64())
+            $match.Hwnd = $hwnd
+            $ids = foreach ($item in $opened) { $item.Hwnd.ToInt64().ToString() }
+            Set-Content -LiteralPath $hwndFile -Value $ids -Encoding Ascii
+            $saveDir = Join-Path $root "addresses"
+            New-Item -ItemType Directory -Force -Path $saveDir | Out-Null
+            $saveNames = @($match.Title -split '\s+' | Where-Object { $_ -and $_ -ne "All" })
+            if ($saveNames -notcontains $screen) { $saveNames += $screen }
+            if ($match.Title -eq "All" -and $LayoutScreens) { $saveNames = @($LayoutScreens) }
+            foreach ($name in $saveNames) {
+                [System.IO.File]::WriteAllText((Join-Path $saveDir ($name + ".txt")), $url, $utf8)
+            }
+            [System.IO.File]::WriteAllText($resultPath, "ok", $utf8)
+        } catch {
+            $reason = $_.Exception.Message
+            if (-not $reason) { $reason = "The address did not open." }
+            $reason = ($reason -replace '[\r\n]+', ' ')
+            [System.IO.File]::WriteAllText($resultPath, "error $reason", $utf8)
+        } finally {
+            $script:urlBusy = $false
+        }
+    } catch {}
+})
+$urlTimer.Start()
 Write-Output "Opened $($opened.Count) pages. Leave this window open. Edge-Close.bat closes them."
 [System.Windows.Forms.Application]::Run()
 exit 0
