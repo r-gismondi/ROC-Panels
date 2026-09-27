@@ -220,7 +220,7 @@ export function WallConsole() {
             <div>
               <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{scopeLabel}</p>
               <h1 className="mt-1 text-3xl font-semibold tracking-wide">{scopeTitle}</h1>
-              <p className="mt-1 text-sm text-cyan-100/80">{scopeDetail}</p>
+              <p className="mt-1 min-h-[3.75rem] text-sm leading-5 text-cyan-100/80">{scopeDetail}</p>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
