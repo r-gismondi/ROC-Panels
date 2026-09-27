@@ -1,5 +1,7 @@
-import { execFile } from "child_process"
+import { execFile, spawn } from "child_process"
 import { promisify } from "util"
+import fs from "fs"
+import os from "os"
 import path from "path"
 
 const execFileAsync = promisify(execFile)
@@ -41,6 +43,157 @@ function redact(text: string, password: string) {
   return text.split(password).join("***")
 }
 
+function machineIs(host: string) {
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.family === "IPv4" && entry.address === host) return true
+    }
+  }
+  return false
+}
+
+function layoutsRoot(host: string) {
+  return machineIs(host) ? "C:\\layouts" : `\\\\${host}\\c$\\layouts`
+}
+
+const watcherReadyUntil = new Map<string, number>()
+const logonScheduled = new Set<string>()
+
+function scheduleRemoteLogon(host: string, user: string, password: string) {
+  if (machineIs(host) || logonScheduled.has(host)) return
+  logonScheduled.add(host)
+  const script = `
+$ErrorActionPreference = 'Continue'
+$HostName = ${psString(host)}
+$User = ${psString(user)}
+$Pass = ${psString(password)}
+$task = 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\\layouts\\Watch-Launch.ps1'
+& schtasks.exe /Create /S $HostName /U $User /P $Pass /SC ONLOGON /RL HIGHEST /TN WallLayoutWatch /TR $task /F | Out-Null
+exit 0
+`
+  void execFileAsync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], {
+    windowsHide: true,
+    timeout: 60000,
+  }).catch(() => {
+    logonScheduled.delete(host)
+  })
+}
+
+async function watcherFresh(host: string) {
+  const readyUntil = watcherReadyUntil.get(host) ?? 0
+  if (readyUntil > Date.now()) return true
+  const file = path.join(layoutsRoot(host), "watcher-alive.txt")
+  let first = ""
+  try {
+    first = fs.readFileSync(file, "utf8")
+  } catch {
+    return false
+  }
+  await new Promise((resolve) => setTimeout(resolve, 1500))
+  let second = ""
+  try {
+    second = fs.readFileSync(file, "utf8")
+  } catch {
+    return false
+  }
+  if (second === first) return false
+  watcherReadyUntil.set(host, Date.now() + 60000)
+  return true
+}
+
+function queueLaunch(host: string, bat: string) {
+  const dir = path.join(layoutsRoot(host), "queue")
+  fs.mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, `${Date.now()}-${process.pid}.txt`)
+  fs.writeFileSync(`${file}.tmp`, bat, "ascii")
+  fs.renameSync(`${file}.tmp`, file)
+}
+
+function publishWatcher(host: string) {
+  const root = layoutsRoot(host)
+  fs.mkdirSync(root, { recursive: true })
+  for (const name of ["Watch-Launch.ps1", "Start-Watch.bat", "Launch-InSession.ps1"]) {
+    fs.copyFileSync(path.join(process.cwd(), "scripts", name), path.join(root, name))
+  }
+}
+
+function startLocalWatcher() {
+  const child = spawn(
+    "powershell.exe",
+    ["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", "C:\\layouts\\Watch-Launch.ps1"],
+    { detached: true, stdio: "ignore", windowsHide: true },
+  )
+  child.unref()
+}
+
+async function startRemoteWatcher(host: string, user: string, password: string) {
+  const script = `
+$ErrorActionPreference = 'Continue'
+$HostName = ${psString(host)}
+$User = ${psString(user)}
+$Pass = ${psString(password)}
+function Out-Line($Text) { Write-Output $Text }
+$share = "\\\\$HostName\\c$"
+$net = & net.exe use $share "/user:$User" $Pass 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0 -and $net -notmatch 'already in use|multiple connections') { Out-Line "Could not open $share"; Out-Line $net; exit 1 }
+& schtasks.exe /End /S $HostName /U $User /P $Pass /TN WallLayout 2>$null | Out-Null
+$tr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\layouts\\Launch-InSession.ps1 -Bat C:\\layouts\\Start-Watch.bat'
+$create = & schtasks.exe /Create /S $HostName /U $User /P $Pass /RU SYSTEM /SC ONCE /ST 00:00 /RL HIGHEST /TN WallLayout /TR $tr /F 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) { Out-Line $create; exit 1 }
+$run = & schtasks.exe /Run /S $HostName /U $User /P $Pass /TN WallLayout 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) { Out-Line $run; exit 1 }
+exit 0
+`
+  const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], {
+    windowsHide: true,
+    timeout: 60000,
+  })
+  const message = redact(stdout.trim(), password)
+  if (message) throw new Error(message)
+}
+
+async function ensureWatcher(host: string, user: string, password: string) {
+  if (await watcherFresh(host)) {
+    scheduleRemoteLogon(host, user, password)
+    return
+  }
+  publishWatcher(host)
+  if (machineIs(host)) {
+    try {
+      await execFileAsync(
+        "schtasks.exe",
+        [
+          "/Create",
+          "/SC",
+          "ONLOGON",
+          "/RL",
+          "HIGHEST",
+          "/TN",
+          "WallLayoutWatch",
+          "/TR",
+          "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\\layouts\\Watch-Launch.ps1",
+          "/F",
+        ],
+        { windowsHide: true, timeout: 15000 },
+      )
+    } catch {
+      // The desktop process below still handles this session when the logon task cannot be saved.
+    }
+    startLocalWatcher()
+  } else {
+    await startRemoteWatcher(host, user, password)
+  }
+  const deadline = Date.now() + (machineIs(host) ? 8000 : 20000)
+  while (Date.now() < deadline) {
+    if (await watcherFresh(host)) {
+      scheduleRemoteLogon(host, user, password)
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+  throw new Error(`The layout watcher on ${host} did not start.`)
+}
+
 export async function launchLayout(computer: string, preset: string): Promise<LaunchResult> {
   const command = layoutCommand(computer, preset)
   if (!command) return { ok: false, message: "That preset is not on this computer." }
@@ -54,50 +207,13 @@ export async function launchLayout(computer: string, preset: string): Promise<La
   const password = process.env.LAYOUT_PASSWORD || ""
   if (!password) return { ok: false, message: "Set LAYOUT_PASSWORD to the wall Administrator password, then restart this page." }
 
-  const helper = path.join(process.cwd(), "scripts", "Launch-InSession.ps1")
-  const script = `
-$ErrorActionPreference = 'Continue'
-$HostName = ${psString(command.host)}
-$User = ${psString(user)}
-$Pass = ${psString(password)}
-$Bat = ${psString(command.path)}
-$Helper = ${psString(helper)}
-$Label = ${psString(command.label)}
-function Out-Line($Text) { Write-Output $Text }
-if (@(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object IPAddress) -contains $HostName) {
-  Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','start','""',$Bat -WorkingDirectory (Split-Path $Bat)
-  if ($Label -eq 'Close') { Out-Line "Closed Edge on this computer ($HostName)." } else { Out-Line "Opened $Label on this computer ($HostName)." }
-  exit 0
-}
-$share = "\\\\$HostName\\c$"
-$net = & net.exe use $share "/user:$User" $Pass 2>&1 | Out-String
-if ($LASTEXITCODE -ne 0) { Out-Line "Could not open $share"; Out-Line $net; exit 1 }
-Copy-Item -LiteralPath $Helper -Destination "\\\\$HostName\\c$\\layouts\\Launch-InSession.ps1" -Force
-& schtasks.exe /End /S $HostName /U $User /P $Pass /TN WallLayout 2>$null | Out-Null
-$tr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\layouts\\Launch-InSession.ps1 -Bat ' + $Bat
-$create = & schtasks.exe /Create /S $HostName /U $User /P $Pass /RU SYSTEM /SC ONCE /ST 00:00 /RL HIGHEST /TN WallLayout /TR $tr /F 2>&1 | Out-String
-if ($LASTEXITCODE -ne 0) { Out-Line $create; exit 1 }
-$run = & schtasks.exe /Run /S $HostName /U $User /P $Pass /TN WallLayout 2>&1 | Out-String
-if ($LASTEXITCODE -ne 0) { Out-Line $run; exit 1 }
-Start-Sleep -Seconds 2
-$resultPath = "\\\\$HostName\\c$\\layouts\\launch-result.txt"
-if (Test-Path -LiteralPath $resultPath) { Get-Content -LiteralPath $resultPath -Raw } else { Out-Line "Started $Label on $HostName. No result was written yet." }
-exit 0
-`
   try {
-    const { stdout } = await execFileAsync(
-      "powershell.exe",
-      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
-      { windowsHide: true, timeout: 45000 },
-    )
-    const message = redact(stdout.trim(), password)
-    if (command.label === "Close") {
-      if (!message || message.startsWith("Opened on session") || message.startsWith("Opened Close")) {
-        return { ok: true, message: `Closed Edge on ${command.host}.` }
-      }
-      if (/could not|missing|no signed-in/i.test(message)) return { ok: false, message }
-    }
-    return { ok: true, message: message || `Opened ${command.label} on ${command.host}.` }
+    const known = (watcherReadyUntil.get(command.host) ?? 0) > Date.now()
+    if (known) void watcherFresh(command.host).catch(() => watcherReadyUntil.delete(command.host))
+    else await ensureWatcher(command.host, user, password)
+    queueLaunch(command.host, command.path)
+    const message = command.label === "Close" ? `Closed Edge on ${command.host}.` : `Opened ${command.label} on ${command.host}.`
+    return { ok: true, message }
   } catch (error) {
     const failed = error as { code?: string; stdout?: string; stderr?: string; message?: string }
     if (failed.code === "ENOENT") return { ok: false, message: "PowerShell was not found." }

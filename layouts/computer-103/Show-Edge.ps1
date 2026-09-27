@@ -12,7 +12,9 @@ $ErrorActionPreference = "Stop"
 $HomeUrl = "https://ccv2.mtllc.us/landing"
 
 if (-not ("PanelWin" -as [type])) {
-    Add-Type @"
+    $panelDll = "C:\layouts\PanelWin.dll"
+    if (-not (Test-Path -LiteralPath $panelDll)) {
+        Add-Type -OutputAssembly $panelDll -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 public struct PanelRect { public int Left; public int Top; public int Right; public int Bottom; }
@@ -224,6 +226,8 @@ public static class PanelWin {
     }
 }
 "@
+    }
+    Add-Type -Path $panelDll
 }
 [void][PanelWin]::SetProcessDPIAware()
 
@@ -335,7 +339,7 @@ if (-not $edge) { Write-Error "Microsoft Edge was not found."; exit 1 }
 Stop-LayoutEdge $root
 Close-RecordedWindows $hwndFile
 Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 800
+Start-Sleep -Milliseconds 200
 Set-Taskbar $false
 
 function Zone($title, $x, $y, $w, $h) {
@@ -388,7 +392,7 @@ foreach ($zone in $presets[$Preset]) {
     Add-Content -Path $hwndFile -Value $hwnd.ToInt64() -Encoding Ascii
     $opened += [pscustomobject]@{ Hwnd = $hwnd; X = $zone.X; Y = $zone.Y; W = $drawW; H = $drawH }
     Write-Output "Placed $($zone.Title)"
-    Start-Sleep -Milliseconds 700
+    Start-Sleep -Milliseconds 150
 }
 
 if ($opened.Count -eq 0) { Write-Output "Opened 0 windows."; exit 1 }
