@@ -108,10 +108,12 @@ const COMPUTER_3_PRESETS: Preset[] = [
 export function WallConsole() {
   const [selection, setSelection] = useState<Selection>({ panel: 1, screen: "all" })
   const [preset, setPreset] = useState<Record<PanelId, string>>({ 1: "focus", 2: "focus" })
+  const [applied, setApplied] = useState<Record<PanelId, string>>({ 1: "focus", 2: "focus" })
   const [computer3Preset, setComputer3Preset] = useState("independent")
+  const [computer3Applied, setComputer3Applied] = useState("independent")
   const [power, setPower] = useState<Record<string, boolean>>(initialPower)
   const [brightness, setBrightness] = useState<Record<string, number>>(initialBrightness)
-  const [layoutStatus, setLayoutStatus] = useState("Preset buttons open Edge on the selected computer.")
+  const [layoutStatus, setLayoutStatus] = useState("Preset buttons preview the layout here. Confirm opens Edge on that computer.")
   const layoutBusy = useRef(false)
   const controlRef = useRef<HTMLDivElement>(null)
   const [controlHeight, setControlHeight] = useState<number>()
@@ -192,10 +194,24 @@ export function WallConsole() {
     })
   }
 
+  const footer =
+    panel === 1
+      ? { label: "PANEL 1 PRESETS", presets: PRESETS[1], activeId: preset[1], appliedId: applied[1], computer: "101" as const, target: "Panel 1" }
+      : computer3Scope
+        ? {
+            label: "COMPUTER 3 PRESETS",
+            presets: COMPUTER_3_PRESETS,
+            activeId: computer3Preset,
+            appliedId: computer3Applied,
+            computer: "103" as const,
+            target: "Computer 3",
+          }
+        : { label: "COMPUTER 2 PRESETS", presets: PRESETS[2], activeId: preset[2], appliedId: applied[2], computer: "102" as const, target: "Computer 2" }
+
   async function runLayout(computer: "101" | "102" | "103", id: string) {
-    if (layoutBusy.current) return
+    if (layoutBusy.current) return false
     layoutBusy.current = true
-    setLayoutStatus("Sending the layout…")
+    setLayoutStatus(id === "close" ? "Closing Edge…" : "Opening the layout…")
     try {
       const response = await fetch("/api/layout", {
         method: "POST",
@@ -204,8 +220,10 @@ export function WallConsole() {
       })
       const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null
       setLayoutStatus(body?.message || body?.error || "The layout did not start.")
+      return response.ok
     } catch {
       setLayoutStatus("Could not reach the layout service.")
+      return false
     } finally {
       layoutBusy.current = false
     }
@@ -324,37 +342,41 @@ export function WallConsole() {
       </section>
 
       <footer className="border-t border-cyan-300/30 px-4 py-3 sm:px-6">
-        {panel === 1 ? (
-          <PresetRow
-            label="PANEL 1 PRESETS"
-            presets={PRESETS[1]}
-            activeId={preset[1]}
-            onSelect={(id) => {
-              setPreset((currentPreset) => ({ ...currentPreset, 1: id }))
-              void runLayout("101", id)
-            }}
-          />
-        ) : computer3Scope ? (
-          <PresetRow
-            label="COMPUTER 3 PRESETS"
-            presets={COMPUTER_3_PRESETS}
-            activeId={computer3Preset}
-            onSelect={(id) => {
-              setComputer3Preset(id)
-              void runLayout("103", id)
-            }}
-          />
-        ) : (
-          <PresetRow
-            label="COMPUTER 2 PRESETS"
-            presets={PRESETS[2]}
-            activeId={preset[2]}
-            onSelect={(id) => {
-              setPreset((currentPreset) => ({ ...currentPreset, 2: id }))
-              void runLayout("102", id)
-            }}
-          />
-        )}
+        <PresetRow
+          label={footer.label}
+          presets={footer.presets}
+          activeId={footer.activeId}
+          pending={footer.activeId !== footer.appliedId}
+          onSelect={(id) => {
+            const name = footer.presets.find((item) => item.id === id)?.name ?? id
+            if (footer.computer === "103") setComputer3Preset(id)
+            else if (footer.computer === "101") setPreset((currentPreset) => ({ ...currentPreset, 1: id }))
+            else setPreset((currentPreset) => ({ ...currentPreset, 2: id }))
+            setLayoutStatus(
+              id === footer.appliedId
+                ? `${name} is the current layout for ${footer.target}.`
+                : `Previewing ${name} on ${footer.target}. Confirm to open Edge, or cancel.`,
+            )
+          }}
+          onConfirm={() => {
+            void (async () => {
+              const ok = await runLayout(footer.computer, footer.activeId)
+              if (!ok) return
+              if (footer.computer === "103") setComputer3Applied(footer.activeId)
+              else if (footer.computer === "101") setApplied((currentApplied) => ({ ...currentApplied, 1: footer.activeId }))
+              else setApplied((currentApplied) => ({ ...currentApplied, 2: footer.activeId }))
+            })()
+          }}
+          onCancel={() => {
+            if (footer.computer === "103") setComputer3Preset(footer.appliedId)
+            else if (footer.computer === "101") setPreset((currentPreset) => ({ ...currentPreset, 1: footer.appliedId }))
+            else setPreset((currentPreset) => ({ ...currentPreset, 2: footer.appliedId }))
+            setLayoutStatus(`Canceled the preview on ${footer.target}.`)
+          }}
+          onClose={() => {
+            void runLayout(footer.computer, "close")
+          }}
+        />
       </footer>
     </main>
   )
@@ -528,17 +550,31 @@ function PresetRow({
   label,
   presets,
   activeId,
+  pending,
   onSelect,
+  onConfirm,
+  onCancel,
+  onClose,
 }: {
   label: string
   presets: Preset[]
   activeId: string
+  pending: boolean
   onSelect: (id: string) => void
+  onConfirm: () => void
+  onCancel: () => void
+  onClose: () => void
 }) {
   return (
     <div>
-      <div className="mb-2">
-        <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{label}</p>
+      <div className="mb-2 flex items-end justify-between gap-3">
+        <div>
+          <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{label}</p>
+          <p className="text-xs text-cyan-100/80">{pending ? "Preview on the screens. Confirm opens Edge." : "Choose a preset to preview it on the screens."}</p>
+        </div>
+        <GlowButton tone="alert" onClick={onClose}>
+          Close Edge
+        </GlowButton>
       </div>
       <div className={`grid grid-cols-2 gap-2 ${presets.length > 2 ? "sm:grid-cols-5" : "sm:grid-cols-2 sm:max-w-md"}`}>
         {presets.map((item) => (
@@ -547,6 +583,16 @@ function PresetRow({
           </GlowButton>
         ))}
       </div>
+      {pending ? (
+        <div className="mt-2 grid max-w-md grid-cols-2 gap-2">
+          <GlowButton active onClick={onConfirm}>
+            Confirm
+          </GlowButton>
+          <GlowButton onClick={onCancel}>
+            Cancel
+          </GlowButton>
+        </div>
+      ) : null}
     </div>
   )
 }

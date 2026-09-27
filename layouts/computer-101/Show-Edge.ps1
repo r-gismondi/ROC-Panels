@@ -322,6 +322,7 @@ function Set-Taskbar([bool]$Visible) {
 if ($Close) {
     Close-RecordedWindows $hwndFile
     Stop-HostProcess $hostPidFile
+    Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Set-Taskbar $true
     exit 0
 }

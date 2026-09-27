@@ -16,12 +16,13 @@ const BATS: Record<string, string> = {
   focus: "Edge-Focus.bat",
   "focus-split": "Edge-Focus-Split.bat",
   full: "Edge-Full.bat",
+  close: "Edge-Close.bat",
 }
 
 const ALLOWED: Record<string, string[]> = {
-  "101": ["independent", "split", "focus", "focus-split", "full"],
-  "102": ["independent", "split", "focus", "focus-split", "full"],
-  "103": ["independent", "full"],
+  "101": ["independent", "split", "focus", "focus-split", "full", "close"],
+  "102": ["independent", "split", "focus", "focus-split", "full", "close"],
+  "103": ["independent", "full", "close"],
 }
 
 export type LaunchResult = { ok: true; message: string } | { ok: false; message: string }
@@ -31,7 +32,7 @@ export function layoutCommand(computer: string, preset: string) {
   const allowed = ALLOWED[computer]
   const bat = BATS[preset]
   if (!host || !allowed || !bat || !allowed.includes(preset)) return null
-  const label = preset === "focus-split" ? "Focus split" : preset.charAt(0).toUpperCase() + preset.slice(1)
+  const label = preset === "close" ? "Close" : preset === "focus-split" ? "Focus split" : preset.charAt(0).toUpperCase() + preset.slice(1)
   return { host, bat, path: `C:\\layouts\\computer-${computer}\\${bat}`, label }
 }
 
@@ -65,7 +66,7 @@ $Label = ${psString(command.label)}
 function Out-Line($Text) { Write-Output $Text }
 if (@(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object IPAddress) -contains $HostName) {
   Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','start','""',$Bat -WorkingDirectory (Split-Path $Bat)
-  Out-Line "Opened $Label on this computer ($HostName)."
+  if ($Label -eq 'Close') { Out-Line "Closed Edge on this computer ($HostName)." } else { Out-Line "Opened $Label on this computer ($HostName)." }
   exit 0
 }
 $share = "\\\\$HostName\\c$"
@@ -89,8 +90,14 @@ exit 0
       ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
       { windowsHide: true, timeout: 45000 },
     )
-    const message = redact(stdout.trim(), password) || `Opened ${command.label} on ${command.host}.`
-    return { ok: true, message }
+    const message = redact(stdout.trim(), password)
+    if (command.label === "Close") {
+      if (!message || message.startsWith("Opened on session") || message.startsWith("Opened Close")) {
+        return { ok: true, message: `Closed Edge on ${command.host}.` }
+      }
+      if (/could not|missing|no signed-in/i.test(message)) return { ok: false, message }
+    }
+    return { ok: true, message: message || `Opened ${command.label} on ${command.host}.` }
   } catch (error) {
     const failed = error as { code?: string; stdout?: string; stderr?: string; message?: string }
     if (failed.code === "ENOENT") return { ok: false, message: "PowerShell was not found." }
