@@ -111,6 +111,8 @@ export function WallConsole() {
   const [computer3Preset, setComputer3Preset] = useState("independent")
   const [power, setPower] = useState<Record<string, boolean>>(initialPower)
   const [brightness, setBrightness] = useState<Record<string, number>>(initialBrightness)
+  const [layoutStatus, setLayoutStatus] = useState("Preset buttons open Edge on the selected computer.")
+  const layoutBusy = useRef(false)
   const controlRef = useRef<HTMLDivElement>(null)
   const [controlHeight, setControlHeight] = useState<number>()
 
@@ -190,6 +192,25 @@ export function WallConsole() {
     })
   }
 
+  async function runLayout(computer: "101" | "102" | "103", id: string) {
+    if (layoutBusy.current) return
+    layoutBusy.current = true
+    setLayoutStatus("Sending the layout…")
+    try {
+      const response = await fetch("/api/layout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ computer, preset: id }),
+      })
+      const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null
+      setLayoutStatus(body?.message || body?.error || "The layout did not start.")
+    } catch {
+      setLayoutStatus("Could not reach the layout service.")
+    } finally {
+      layoutBusy.current = false
+    }
+  }
+
   return (
     <main className="flex min-h-svh flex-col bg-[radial-gradient(circle_at_top,#1650c8_0%,#06215f_42%,#03102e_100%)] text-white">
       <header className="flex items-center justify-between gap-4 border-b border-cyan-300/30 px-4 py-3 sm:px-6">
@@ -248,8 +269,9 @@ export function WallConsole() {
 
             <p className="text-xs leading-5 text-cyan-100/70">
               {allOn ? "Power on" : allOff ? "Power off" : "Power is mixed"} for{" "}
-              {selection.screen === "all" ? `panel ${panel}` : scopeTitle}. Nothing is sent to the displays yet.
+              {selection.screen === "all" ? `panel ${panel}` : scopeTitle}. Power and brightness stay on this page.
             </p>
+            <p className="min-h-10 text-xs leading-5 text-cyan-100">{layoutStatus}</p>
           </div>
 
         <section
@@ -307,21 +329,30 @@ export function WallConsole() {
             label="PANEL 1 PRESETS"
             presets={PRESETS[1]}
             activeId={preset[1]}
-            onSelect={(id) => setPreset((currentPreset) => ({ ...currentPreset, 1: id }))}
+            onSelect={(id) => {
+              setPreset((currentPreset) => ({ ...currentPreset, 1: id }))
+              void runLayout("101", id)
+            }}
           />
         ) : computer3Scope ? (
           <PresetRow
             label="COMPUTER 3 PRESETS"
             presets={COMPUTER_3_PRESETS}
             activeId={computer3Preset}
-            onSelect={setComputer3Preset}
+            onSelect={(id) => {
+              setComputer3Preset(id)
+              void runLayout("103", id)
+            }}
           />
         ) : (
           <PresetRow
             label="COMPUTER 2 PRESETS"
             presets={PRESETS[2]}
             activeId={preset[2]}
-            onSelect={(id) => setPreset((currentPreset) => ({ ...currentPreset, 2: id }))}
+            onSelect={(id) => {
+              setPreset((currentPreset) => ({ ...currentPreset, 2: id }))
+              void runLayout("102", id)
+            }}
           />
         )}
       </footer>
