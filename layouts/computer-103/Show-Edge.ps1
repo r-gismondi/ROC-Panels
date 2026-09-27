@@ -130,6 +130,10 @@ public static class PanelWin {
             bottom = 8;
             if (top < 48) top = 88;
         }
+        if (h >= 1080) {
+            SetWindowPos(hwnd, new IntPtr(-2), x, y, w, h, 0x0020 | 0x0040);
+            return;
+        }
         int posX = x - left;
         int posY = y - top;
         int posW = w + left + right;
@@ -150,45 +154,13 @@ public static class PanelWin {
         style |= 0x02000000;
         SetWindowLong32(host, -16, style);
     }
-    public static void Fit(IntPtr hwnd, IntPtr host, int x, int y, int w, int h) {
-        SetWindowRgn(hwnd, IntPtr.Zero, false);
-        int style = GetWindowLong32(hwnd, -16);
-        style &= ~0x00C00000;
-        style &= ~0x00040000;
-        style &= ~0x00080000;
-        style &= ~0x00020000;
-        style &= ~0x00010000;
-        style &= ~0x00800000;
-        style |= 0x10000000;
-        if (h >= 1080) {
-            style &= ~0x40000000;
-            style |= unchecked((int)0x80000000);
-            SetWindowLong32(hwnd, -16, style);
-            int ex = GetWindowLong32(hwnd, -20);
-            ex &= ~0x00000100;
-            ex &= ~0x00000200;
-            ex &= ~0x00000001;
-            ex &= ~0x00020000;
-            SetWindowLong32(hwnd, -20, ex);
-            SetWindowLong32(hwnd, -16, unchecked((int)0x80000000) | 0x10000000 | 0x04000000);
-            SetParent(hwnd, IntPtr.Zero);
-            ShowWindow(host, 0);
-            SetWindowTheme(hwnd, " ", " ");
-            SetWindowPos(hwnd, new IntPtr(-2), x, y, w, h, 0x0020 | 0x0040);
-            IntPtr page = PageWidget(hwnd);
-            if (page != IntPtr.Zero) MoveWindow(page, 0, 0, w, h, true);
-            return;
-        }
-        style &= ~unchecked((int)0x80000000);
-        style |= 0x40000000;
-        SetWindowLong32(hwnd, -16, style);
-        SetParent(hwnd, host);
+    static void Measure(IntPtr hwnd, out int left, out int top, out int right, out int bottom) {
+        left = 0;
+        top = 0;
+        right = 0;
+        bottom = 0;
         PanelRect window;
         GetWindowRect(hwnd, out window);
-        int left = 0;
-        int top = 0;
-        int right = 0;
-        int bottom = 0;
         IntPtr widget = PageWidget(hwnd);
         if (widget != IntPtr.Zero) {
             PanelRect page;
@@ -202,14 +174,53 @@ public static class PanelWin {
             if (right < 0) right = 0;
             if (bottom < 0) bottom = 0;
         }
-        if (top < 40) top = 40;
-        if (h < 1080) {
-            int hostW = w + left + right;
-            int hostH = h + top + bottom;
-            SetWindowPos(host, new IntPtr(-2), x - left, y - top, hostW, hostH, 0x0040);
-            SetWindowRgn(host, CreateRectRgn(left, top, left + w, top + h), true);
-            MoveWindow(hwnd, 0, 0, hostW, hostH, true);
+    }
+    public static void Fit(IntPtr hwnd, IntPtr host, int x, int y, int w, int h) {
+        int style = GetWindowLong32(hwnd, -16);
+        bool alreadyChild = (style & 0x40000000) != 0;
+        if (!alreadyChild) {
+            SetWindowRgn(hwnd, IntPtr.Zero, false);
+            style &= ~0x00C00000;
+            style &= ~0x00040000;
+            style &= ~0x00080000;
+            style &= ~0x00020000;
+            style &= ~0x00010000;
+            style &= ~0x00800000;
+            style |= 0x10000000;
+            style &= ~unchecked((int)0x80000000);
+            style |= 0x40000000;
+            SetWindowLong32(hwnd, -16, style);
+            SetParent(hwnd, host);
         }
+        int left, top, right, bottom;
+        Measure(hwnd, out left, out top, out right, out bottom);
+        if (h >= 1080) {
+            if (top < 40) top = 48;
+            int childW = w + left + right;
+            int childH = h + top + bottom;
+            PanelRect hostRect;
+            bool hostOk = GetWindowRect(host, out hostRect)
+                && hostRect.Left == x && hostRect.Top == y
+                && (hostRect.Right - hostRect.Left) == w
+                && (hostRect.Bottom - hostRect.Top) == h;
+            if (!hostOk) SetWindowPos(host, new IntPtr(-2), x, y, w, h, 0x0014);
+            PanelRect window;
+            int wantLeft = x - left;
+            int wantTop = y - top;
+            bool childOk = GetWindowRect(hwnd, out window)
+                && window.Left == wantLeft && window.Top == wantTop
+                && (window.Right - window.Left) == childW
+                && (window.Bottom - window.Top) == childH;
+            if (!childOk) MoveWindow(hwnd, -left, -top, childW, childH, true);
+            return;
+        }
+        if (alreadyChild) return;
+        if (top < 40) top = 40;
+        int hostW = w + left + right;
+        int hostH = h + top + bottom;
+        SetWindowPos(host, new IntPtr(-2), x - left, y - top, hostW, hostH, 0x0040);
+        SetWindowRgn(host, CreateRectRgn(left, top, left + w, top + h), true);
+        MoveWindow(hwnd, 0, 0, hostW, hostH, true);
     }
 }
 "@
@@ -332,8 +343,8 @@ function Zone($title, $x, $y, $w, $h) {
 
 $presets = @{
     Independent = @(
-        (Zone "TV13" 0 0 1920 1080)
         (Zone "TV18" 0 1080 1920 1080)
+        (Zone "TV13" 0 0 1920 1080)
     )
     Full = @(
         (Zone "TV13 TV18" 0 0 1920 2160)
@@ -347,7 +358,7 @@ foreach ($zone in $presets[$Preset]) {
     $drawW = $zone.W
     $drawH = $zone.H
     if (($zone.X + $zone.W) -lt 1920) { $drawW += 2 }
-    if (($zone.Y + $zone.H) -lt 2160) { $drawH += 2 }
+    if (($zone.Y + $zone.H) -lt 2160) { $drawH += 8 }
     Write-Output "Opening $($zone.Title)"
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
@@ -405,14 +416,17 @@ foreach ($item in $opened) {
         if ($script:hostsLeft -le 0) { [System.Windows.Forms.Application]::ExitThread() }
     })
 }
+$script:fitPasses = 0
 $timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 300
+$timer.Interval = 1000
 $timer.Add_Tick({
+    $script:fitPasses += 1
     foreach ($item in $opened) {
         if ($item.H -ge 1080 -and [PanelWin]::IsWindow($item.Hwnd)) {
             [void][PanelWin]::Fit($item.Hwnd, $item.Host, $item.X, $item.Y, $item.W, $item.H)
         }
     }
+    if ($script:fitPasses -ge 3) { $timer.Stop() }
 })
 $timer.Start()
 Write-Output "Opened $($opened.Count) pages. Leave this window open. Edge-Close.bat closes them."

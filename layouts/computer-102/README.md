@@ -1,6 +1,6 @@
 # Layout test for 192.168.0.102
 
-Copy this folder onto computer 2 and double-click a preset there. The windows have to open on that computer's desktop.
+Copy this folder to `C:\layouts\computer-102` on computer 2 (`192.168.0.102`) and double-click a preset there. The windows have to open on that computer's desktop.
 
 Display 1 must be the left monitor (HDMI 1) and display 2 the right monitor (HDMI 2). Both are 1920×1080, landscape, 100% scale, with the tops aligned. These are the same layouts as computer 1. TV13 and TV18 are on computer 3 and are not opened here.
 

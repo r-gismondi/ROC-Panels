@@ -129,6 +129,10 @@ public static class PanelWin {
             bottom = 8;
             if (top < 48) top = 88;
         }
+        if (h >= 1080) {
+            SetWindowPos(hwnd, new IntPtr(-2), x, y, w, h, 0x0020 | 0x0040);
+            return;
+        }
         int posX = x - left;
         int posY = y - top;
         int posW = w + left + right;
@@ -144,54 +148,18 @@ public static class PanelWin {
         SetWindowPos(hwnd, new IntPtr(-2), posX, posY, posW, posH, 0x0020 | 0x0040);
         SetWindowRgn(hwnd, CreateRectRgn(left, top, left + w, top + h), true);
     }
-    static System.Collections.Generic.Dictionary<IntPtr, IntPtr> OldProc = new System.Collections.Generic.Dictionary<IntPtr, IntPtr>();
-    static System.Collections.Generic.Dictionary<IntPtr, int[]> HostLock = new System.Collections.Generic.Dictionary<IntPtr, int[]>();
-    static WndProc HostDelegate;
-    delegate IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr")] static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr newProc);
-    [DllImport("user32.dll")] static extern IntPtr CallWindowProc(IntPtr prev, IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
-    static IntPtr HostProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam) {
-        if (msg == 0x0046 && HostLock.ContainsKey(hWnd)) {
-            int[] box = HostLock[hWnd];
-            int offset = IntPtr.Size * 2;
-            Marshal.WriteInt32(lParam, offset, box[0]);
-            Marshal.WriteInt32(lParam, offset + 4, box[1]);
-            Marshal.WriteInt32(lParam, offset + 8, box[2]);
-            Marshal.WriteInt32(lParam, offset + 12, box[3]);
-        }
-        return CallWindowProc(OldProc[hWnd], hWnd, msg, wParam, lParam);
-    }
-    public static void LockHost(IntPtr host, int x, int y, int w, int h) {
-        HostLock[host] = new int[] { x, y, w, h };
-        if (OldProc.ContainsKey(host)) return;
-        if (HostDelegate == null) HostDelegate = new WndProc(HostProc);
-        OldProc[host] = SetWindowLongPtr64(host, -4, Marshal.GetFunctionPointerForDelegate(HostDelegate));
-    }
     public static void PrepareHost(IntPtr host) {
         int style = GetWindowLong32(host, -16);
         style |= 0x02000000;
         SetWindowLong32(host, -16, style);
     }
-    public static void Fit(IntPtr hwnd, IntPtr host, int x, int y, int w, int h) {
-        SetWindowRgn(hwnd, IntPtr.Zero, false);
-        int style = GetWindowLong32(hwnd, -16);
-        style &= ~0x00C00000;
-        style &= ~0x00040000;
-        style &= ~0x00080000;
-        style &= ~0x00020000;
-        style &= ~0x00010000;
-        style &= ~0x00800000;
-        style |= 0x10000000;
-        style &= ~unchecked((int)0x80000000);
-        style |= 0x40000000;
-        SetWindowLong32(hwnd, -16, style);
-        SetParent(hwnd, host);
+    static void Measure(IntPtr hwnd, out int left, out int top, out int right, out int bottom) {
+        left = 0;
+        top = 0;
+        right = 0;
+        bottom = 0;
         PanelRect window;
         GetWindowRect(hwnd, out window);
-        int left = 0;
-        int top = 0;
-        int right = 0;
-        int bottom = 0;
         IntPtr widget = PageWidget(hwnd);
         if (widget != IntPtr.Zero) {
             PanelRect page;
@@ -205,14 +173,51 @@ public static class PanelWin {
             if (right < 0) right = 0;
             if (bottom < 0) bottom = 0;
         }
-        if (h >= 1080) top = 48;
-        else if (top < 40) top = 40;
+    }
+    public static void Fit(IntPtr hwnd, IntPtr host, int x, int y, int w, int h) {
+        int style = GetWindowLong32(hwnd, -16);
+        bool alreadyChild = (style & 0x40000000) != 0;
+        if (!alreadyChild) {
+            SetWindowRgn(hwnd, IntPtr.Zero, false);
+            style &= ~0x00C00000;
+            style &= ~0x00040000;
+            style &= ~0x00080000;
+            style &= ~0x00020000;
+            style &= ~0x00010000;
+            style &= ~0x00800000;
+            style |= 0x10000000;
+            style &= ~unchecked((int)0x80000000);
+            style |= 0x40000000;
+            SetWindowLong32(hwnd, -16, style);
+            SetParent(hwnd, host);
+        }
+        int left, top, right, bottom;
+        Measure(hwnd, out left, out top, out right, out bottom);
+        if (h >= 1080) {
+            if (top < 40) top = 48;
+            int childW = w + left + right;
+            int childH = h + top + bottom;
+            PanelRect hostRect;
+            bool hostOk = GetWindowRect(host, out hostRect)
+                && hostRect.Left == x && hostRect.Top == y
+                && (hostRect.Right - hostRect.Left) == w
+                && (hostRect.Bottom - hostRect.Top) == h;
+            if (!hostOk) SetWindowPos(host, new IntPtr(-2), x, y, w, h, 0x0014);
+            PanelRect window;
+            int wantLeft = x - left;
+            int wantTop = y - top;
+            bool childOk = GetWindowRect(hwnd, out window)
+                && window.Left == wantLeft && window.Top == wantTop
+                && (window.Right - window.Left) == childW
+                && (window.Bottom - window.Top) == childH;
+            if (!childOk) MoveWindow(hwnd, -left, -top, childW, childH, true);
+            return;
+        }
+        if (alreadyChild) return;
+        if (top < 40) top = 40;
         int hostW = w + left + right;
         int hostH = h + top + bottom;
-        int hostX = x - left;
-        int hostY = y - top;
-        if (h >= 1080) LockHost(host, hostX, hostY, hostW, hostH);
-        SetWindowPos(host, new IntPtr(-2), hostX, hostY, hostW, hostH, 0x0040);
+        SetWindowPos(host, new IntPtr(-2), x - left, y - top, hostW, hostH, 0x0040);
         SetWindowRgn(host, CreateRectRgn(left, top, left + w, top + h), true);
         MoveWindow(hwnd, 0, 0, hostW, hostH, true);
     }
@@ -337,14 +342,14 @@ function Zone($title, $x, $y, $w, $h) {
 
 $presets = @{
     Independent = @(
-        (Zone "TV9"  0    0   960  540)
-        (Zone "TV10" 960  0   960  540)
         (Zone "TV14" 0    540 960  540)
         (Zone "TV15" 960  540 960  540)
-        (Zone "TV11" 1920 0   960  540)
-        (Zone "TV12" 2880 0   960  540)
         (Zone "TV16" 1920 540 960  540)
         (Zone "TV17" 2880 540 960  540)
+        (Zone "TV9"  0    0   960  540)
+        (Zone "TV10" 960  0   960  540)
+        (Zone "TV11" 1920 0   960  540)
+        (Zone "TV12" 2880 0   960  540)
     )
     Split = @(
         (Zone "TV9 TV10 TV14 TV15" 0 0 1920 1080)
@@ -356,11 +361,11 @@ $presets = @{
         (Zone "TV12 TV17" 2880 0 960 1080)
     )
     FocusSplit = @(
-        (Zone "TV9" 0 0 960 540)
         (Zone "TV14" 0 540 960 540)
-        (Zone "TV10 TV11 TV15 TV16" 960 0 1920 1080)
-        (Zone "TV12" 2880 0 960 540)
         (Zone "TV17" 2880 540 960 540)
+        (Zone "TV10 TV11 TV15 TV16" 960 0 1920 1080)
+        (Zone "TV9" 0 0 960 540)
+        (Zone "TV12" 2880 0 960 540)
     )
     Full = @(
         (Zone "All" 0 0 3840 1080)
@@ -374,7 +379,8 @@ foreach ($zone in $presets[$Preset]) {
     $drawW = $zone.W
     $drawH = $zone.H
     if (($zone.X + $zone.W) -lt 3840) { $drawW += 2 }
-    if (($zone.Y + $zone.H) -lt 1080) { $drawH += 2 }
+    if ($zone.H -lt 1080 -and ($zone.Y + $zone.H) -lt 1080) { $drawH += 8 }
+    elseif (($zone.Y + $zone.H) -lt 1080) { $drawH += 2 }
     Write-Output "Opening $($zone.Title)"
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
@@ -432,14 +438,17 @@ foreach ($item in $opened) {
         if ($script:hostsLeft -le 0) { [System.Windows.Forms.Application]::ExitThread() }
     })
 }
+$script:fitPasses = 0
 $timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 300
+$timer.Interval = 1000
 $timer.Add_Tick({
+    $script:fitPasses += 1
     foreach ($item in $opened) {
         if ($item.H -ge 1080 -and [PanelWin]::IsWindow($item.Hwnd)) {
             [void][PanelWin]::Fit($item.Hwnd, $item.Host, $item.X, $item.Y, $item.W, $item.H)
         }
     }
+    if ($script:fitPasses -ge 3) { $timer.Stop() }
 })
 $timer.Start()
 Write-Output "Opened $($opened.Count) pages. Leave this window open. Edge-Close.bat closes them."
