@@ -607,7 +607,15 @@ function PanelFrame({
         </div>
         <span className="text-[11px] tracking-[0.14em] text-cyan-100/80">{allOn ? "ON" : allOff ? "OFF" : "MIXED"}</span>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col gap-2">
+      <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-transparent p-2">
+        {/* Reserves the same space as the computer label on panel 2, so every screen is the same height. */}
+        <p className="invisible truncate text-[11px] font-semibold tracking-[0.08em] whitespace-nowrap uppercase" aria-hidden="true">
+          Computer
+        </p>
+        <p className="invisible mb-2 truncate text-[10px] whitespace-nowrap" aria-hidden="true">
+          192.168.0.101
+        </p>
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
         {rows.map((row) => (
           <div key={row[0].id} className="grid min-h-0 flex-1 gap-2" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>
             {row.map((screen) => {
@@ -637,6 +645,7 @@ function PanelFrame({
             })}
           </div>
         ))}
+        </div>
       </div>
     </section>
   )
