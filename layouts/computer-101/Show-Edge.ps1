@@ -317,6 +317,29 @@ function Stop-HostProcess([string]$Path) {
     }
     Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
 }
+function Stop-LayoutConsoles {
+    $self = $PID
+    $parent = 0
+    $current = Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction SilentlyContinue
+    if ($current) { $parent = [int]$current.ParentProcessId }
+    $procs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.ProcessId -ne $self -and
+        $_.ProcessId -ne $parent -and
+        $_.Name -match '^(cmd|powershell|pwsh)\.exe$' -and
+        $_.CommandLine -and
+        $_.CommandLine -notlike '*Watch-Launch.ps1*' -and
+        ($_.CommandLine -like '*\layouts\*' -or $_.CommandLine -like '*Show-Edge.ps1*')
+    })
+    foreach ($proc in $procs) {
+        Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    if ($parent -gt 0) {
+        $parentProc = Get-CimInstance Win32_Process -Filter "ProcessId = $parent" -ErrorAction SilentlyContinue
+        if ($parentProc -and $parentProc.CommandLine -like '*\layouts\*') {
+            Start-Process -FilePath "powershell.exe" -WindowStyle Hidden -ArgumentList "-NoProfile", "-Command", "Start-Sleep -Milliseconds 400; Stop-Process -Id $parent -Force -ErrorAction SilentlyContinue" | Out-Null
+        }
+    }
+}
 function Set-Taskbar([bool]$Visible) {
     foreach ($name in @("Shell_TrayWnd", "Shell_SecondaryTrayWnd")) {
         $tray = [PanelWin]::FindWindow($name, $null)
@@ -328,6 +351,7 @@ if ($Close) {
     Stop-HostProcess $hostPidFile
     Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Set-Taskbar $true
+    Stop-LayoutConsoles
     exit 0
 }
 Stop-HostProcess $hostPidFile

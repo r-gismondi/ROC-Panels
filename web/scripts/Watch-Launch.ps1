@@ -22,7 +22,9 @@ while ($true) {
         Remove-Item -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue
         if (-not $bat -or -not (Test-Path -LiteralPath $bat)) { continue }
         $work = Split-Path -Parent $bat
-        Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "start", '""', $bat -WorkingDirectory $work | Out-Null
+        $style = "Normal"
+        if ($bat -like "*Edge-Close.bat") { $style = "Hidden" }
+        Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $bat -WorkingDirectory $work -WindowStyle $style | Out-Null
     }
     Start-Sleep -Milliseconds 40
 }
