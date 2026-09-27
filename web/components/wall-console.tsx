@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Slider } from "@/components/ui/slider"
 
 type PanelId = 1 | 2
@@ -111,6 +111,18 @@ export function WallConsole() {
   const [computer3Preset, setComputer3Preset] = useState("independent")
   const [power, setPower] = useState<Record<string, boolean>>(initialPower)
   const [brightness, setBrightness] = useState<Record<string, number>>(initialBrightness)
+  const controlRef = useRef<HTMLDivElement>(null)
+  const [controlHeight, setControlHeight] = useState<number>()
+
+  useEffect(() => {
+    const control = controlRef.current
+    if (!control) return
+    const measure = () => setControlHeight(control.offsetHeight)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(control)
+    return () => observer.disconnect()
+  }, [])
 
   const panel = selection.panel
   const computer3Scope = selection.panel === 2 && (selection.screen === "computer-3" || COMPUTER_3_IDS.includes(selection.screen))
@@ -132,7 +144,6 @@ export function WallConsole() {
     : Math.round(brightnessValues.reduce((sum, value) => sum + value, 0) / brightnessValues.length)
   const computer2Preset = PRESETS[2].find((item) => item.id === preset[2]) ?? PRESETS[2][0]
   const activeComputer3Preset = COMPUTER_3_PRESETS.find((item) => item.id === computer3Preset) ?? COMPUTER_3_PRESETS[0]
-  const activePreset = computer3Scope ? activeComputer3Preset : PRESETS[panel].find((item) => item.id === preset[panel]) ?? PRESETS[panel][0]
   const current = SCREENS.find((screen) => screen.id === selection.screen)
   const scopeLabel =
     selection.screen === "all"
@@ -192,7 +203,7 @@ export function WallConsole() {
         <p className="hidden text-xs tracking-[0.18em] text-cyan-100/70 sm:block">THIS STAND</p>
       </header>
 
-      <section className="grid flex-1 gap-4 px-4 py-4 lg:grid-cols-[1fr_0.72fr_1.55fr] lg:px-6">
+      <section className="grid items-start gap-4 px-4 py-4 lg:grid-cols-[4fr_minmax(16rem,18rem)_5fr] lg:px-6">
         <PanelFrame
           panel={1}
           title="Panel 1"
@@ -202,14 +213,14 @@ export function WallConsole() {
           selection={selection}
           power={power}
           onSelect={setSelection}
+          height={controlHeight}
         />
 
-        <div className="flex flex-col gap-4 self-start">
-          <div className="flex flex-col justify-center gap-4 rounded-2xl border border-cyan-300/40 bg-[#0a2f86]/55 p-4 shadow-[0_0_28px_rgba(40,140,255,0.25)]">
+        <div ref={controlRef} className="flex flex-col justify-center gap-4 rounded-2xl border border-cyan-300/40 bg-[#0a2f86]/55 p-4 shadow-[0_0_28px_rgba(40,140,255,0.25)]">
             <div>
               <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{scopeLabel}</p>
               <h1 className="mt-1 text-3xl font-semibold tracking-wide">{scopeTitle}</h1>
-              <p className="mt-1 text-sm text-cyan-100/80">{scopeDetail}</p>
+              <p className="mt-1 min-h-[3.75rem] text-sm leading-5 text-cyan-100/80">{scopeDetail}</p>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -240,17 +251,17 @@ export function WallConsole() {
               {selection.screen === "all" ? `panel ${panel}` : scopeTitle}. Nothing is sent to the displays yet.
             </p>
           </div>
-        </div>
 
         <section
           onClick={() => setSelection({ panel: 2, screen: "all" })}
-          className={`cursor-pointer rounded-2xl border bg-[#071a4d]/70 p-3 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
+          className={`flex cursor-pointer flex-col rounded-2xl border bg-[#071a4d]/70 p-3 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
             selection.panel === 2 && selection.screen === "all"
               ? "border-white shadow-[0_0_24px_rgba(180,230,255,0.35)]"
               : selection.panel === 2
                 ? "border-cyan-300/70"
                 : "border-cyan-300/25"
           }`}
+          style={controlHeight ? { height: controlHeight } : undefined}
         >
           <div className="mb-3 flex items-end justify-between gap-2">
             <div>
@@ -261,8 +272,9 @@ export function WallConsole() {
               {IDS[2].every((id) => power[id]) ? "ON" : IDS[2].every((id) => !power[id]) ? "OFF" : "MIXED"}
             </span>
           </div>
-          <div className="flex items-stretch gap-2">
+          <div className="grid min-h-0 flex-1 items-stretch gap-2 lg:grid-cols-5">
             <ComputerFrame
+              className="lg:col-span-4"
               title="Computer 2"
               detail="192.168.0.102"
               rows={COMPUTER_2}
@@ -274,6 +286,7 @@ export function WallConsole() {
               onSelectScreen={(screen) => setSelection({ panel: 2, screen })}
             />
             <ComputerFrame
+              className="lg:col-span-1"
               title="Computer 3"
               detail="192.168.0.103"
               rows={COMPUTER_3}
@@ -281,7 +294,6 @@ export function WallConsole() {
               selected={computer3Scope}
               selection={selection}
               power={power}
-              narrow
               onSelectFrame={() => setSelection({ panel: 2, screen: "computer-3" })}
               onSelectScreen={(screen) => setSelection({ panel: 2, screen })}
             />
@@ -293,28 +305,24 @@ export function WallConsole() {
         {panel === 1 ? (
           <PresetRow
             label="PANEL 1 PRESETS"
-            value={activePreset.name}
             presets={PRESETS[1]}
             activeId={preset[1]}
             onSelect={(id) => setPreset((currentPreset) => ({ ...currentPreset, 1: id }))}
           />
+        ) : computer3Scope ? (
+          <PresetRow
+            label="COMPUTER 3 PRESETS"
+            presets={COMPUTER_3_PRESETS}
+            activeId={computer3Preset}
+            onSelect={setComputer3Preset}
+          />
         ) : (
-          <div className="flex flex-col gap-3">
-            <PresetRow
-              label="COMPUTER 2 · 192.168.0.102"
-              value={computer2Preset.name}
-              presets={PRESETS[2]}
-              activeId={preset[2]}
-              onSelect={(id) => setPreset((currentPreset) => ({ ...currentPreset, 2: id }))}
-            />
-            <PresetRow
-              label="COMPUTER 3 · 192.168.0.103"
-              value={activeComputer3Preset.name}
-              presets={COMPUTER_3_PRESETS}
-              activeId={computer3Preset}
-              onSelect={setComputer3Preset}
-            />
-          </div>
+          <PresetRow
+            label="COMPUTER 2 PRESETS"
+            presets={PRESETS[2]}
+            activeId={preset[2]}
+            onSelect={(id) => setPreset((currentPreset) => ({ ...currentPreset, 2: id }))}
+          />
         )}
       </footer>
     </main>
@@ -330,6 +338,7 @@ function PanelFrame({
   selection,
   power,
   onSelect,
+  height,
 }: {
   panel: PanelId
   title: string
@@ -339,6 +348,7 @@ function PanelFrame({
   selection: Selection
   power: Record<string, boolean>
   onSelect: (selection: Selection) => void
+  height?: number
 }) {
   const ids = rows.flat().map((screen) => screen.id)
   const whole = selection.panel === panel && selection.screen === "all"
@@ -348,9 +358,10 @@ function PanelFrame({
   return (
     <section
       onClick={() => onSelect({ panel, screen: "all" })}
-      className={`cursor-pointer rounded-2xl border bg-[#071a4d]/70 p-3 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
+      className={`flex cursor-pointer flex-col rounded-2xl border bg-[#071a4d]/70 p-3 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
         whole ? "border-white shadow-[0_0_24px_rgba(180,230,255,0.35)]" : selection.panel === panel ? "border-cyan-300/70" : "border-cyan-300/25"
       }`}
+      style={height ? { height } : undefined}
     >
       <div className="mb-3 flex items-end justify-between gap-2">
         <div>
@@ -359,9 +370,9 @@ function PanelFrame({
         </div>
         <span className="text-[11px] tracking-[0.14em] text-cyan-100/80">{allOn ? "ON" : allOff ? "OFF" : "MIXED"}</span>
       </div>
-      <div className="flex flex-col gap-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-2">
         {rows.map((row) => (
-          <div key={row[0].id} className="grid gap-2" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>
+          <div key={row[0].id} className="grid min-h-0 flex-1 gap-2" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>
             {row.map((screen) => {
               const group = preset.groups[screen.id] ?? 0
               const color = GROUP_COLOR[group % GROUP_COLOR.length]
@@ -375,7 +386,7 @@ function PanelFrame({
                     event.stopPropagation()
                     onSelect({ panel, screen: screen.id })
                   }}
-                  className="min-h-16 rounded-lg border px-1 py-2 text-center transition"
+                  className="h-full min-h-0 rounded-lg border px-1 py-2 text-center transition"
                   style={{
                     borderColor: isSelected ? "#ffffff" : color,
                     background: on ? `${color}33` : "rgba(0,0,0,0.45)",
@@ -395,6 +406,7 @@ function PanelFrame({
 }
 
 function ComputerFrame({
+  className = "",
   title,
   detail,
   rows,
@@ -402,10 +414,10 @@ function ComputerFrame({
   selected,
   selection,
   power,
-  narrow = false,
   onSelectFrame,
   onSelectScreen,
 }: {
+  className?: string
   title: string
   detail: string
   rows: Screen[][]
@@ -413,7 +425,6 @@ function ComputerFrame({
   selected: boolean
   selection: Selection
   power: Record<string, boolean>
-  narrow?: boolean
   onSelectFrame: () => void
   onSelectScreen: (screen: string) => void
 }) {
@@ -423,15 +434,13 @@ function ComputerFrame({
         event.stopPropagation()
         onSelectFrame()
       }}
-      className={`rounded-xl border p-2 ${narrow ? "w-[5.4rem] shrink-0" : "min-w-0 flex-1"} ${
-        selected ? "border-white bg-white/5" : "border-cyan-300/35"
-      }`}
+      className={`flex h-full min-h-0 min-w-0 flex-col rounded-xl border p-2 ${className} ${selected ? "border-white bg-white/5" : "border-cyan-300/35"}`}
     >
-      <p className="text-[10px] leading-tight font-semibold tracking-[0.12em] uppercase">{title}</p>
-      <p className="mb-2 text-[10px] leading-tight break-all text-cyan-100/70">{detail}</p>
-      <div className="flex flex-col gap-2">
+      <p className="truncate text-[11px] font-semibold tracking-[0.08em] whitespace-nowrap uppercase">{title}</p>
+      <p className="mb-2 truncate text-[10px] whitespace-nowrap text-cyan-100/70">{detail}</p>
+      <div className="flex min-h-0 flex-1 flex-col gap-2">
         {rows.map((row) => (
-          <div key={row[0].id} className="grid gap-2" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>
+          <div key={row[0].id} className="grid min-h-0 flex-1 gap-2" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>
             {row.map((screen) => (
               <ScreenButton
                 key={screen.id}
@@ -471,7 +480,7 @@ function ScreenButton({
         event.stopPropagation()
         onSelect()
       }}
-      className="min-h-16 rounded-lg border px-1 py-2 text-center transition"
+      className="h-full min-h-0 rounded-lg border px-1 py-2 text-center transition"
       style={{
         borderColor: selected ? "#ffffff" : color,
         background: on ? `${color}33` : "rgba(0,0,0,0.45)",
@@ -486,22 +495,19 @@ function ScreenButton({
 
 function PresetRow({
   label,
-  value,
   presets,
   activeId,
   onSelect,
 }: {
   label: string
-  value: string
   presets: Preset[]
   activeId: string
   onSelect: (id: string) => void
 }) {
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between gap-3">
+      <div className="mb-2">
         <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{label}</p>
-        <p className="text-xs text-cyan-100/70">{value}</p>
       </div>
       <div className={`grid grid-cols-2 gap-2 ${presets.length > 2 ? "sm:grid-cols-5" : "sm:grid-cols-2 sm:max-w-md"}`}>
         {presets.map((item) => (
