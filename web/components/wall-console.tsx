@@ -132,7 +132,6 @@ export function WallConsole() {
     : Math.round(brightnessValues.reduce((sum, value) => sum + value, 0) / brightnessValues.length)
   const computer2Preset = PRESETS[2].find((item) => item.id === preset[2]) ?? PRESETS[2][0]
   const activeComputer3Preset = COMPUTER_3_PRESETS.find((item) => item.id === computer3Preset) ?? COMPUTER_3_PRESETS[0]
-  const activePreset = computer3Scope ? activeComputer3Preset : PRESETS[panel].find((item) => item.id === preset[panel]) ?? PRESETS[panel][0]
   const current = SCREENS.find((screen) => screen.id === selection.screen)
   const scopeLabel =
     selection.screen === "all"
@@ -293,7 +292,6 @@ export function WallConsole() {
         {panel === 1 ? (
           <PresetRow
             label="PANEL 1 PRESETS"
-            value={activePreset.name}
             presets={PRESETS[1]}
             activeId={preset[1]}
             onSelect={(id) => setPreset((currentPreset) => ({ ...currentPreset, 1: id }))}
@@ -301,7 +299,6 @@ export function WallConsole() {
         ) : computer3Scope ? (
           <PresetRow
             label="COMPUTER 3 PRESETS"
-            value={activeComputer3Preset.name}
             presets={COMPUTER_3_PRESETS}
             activeId={computer3Preset}
             onSelect={setComputer3Preset}
@@ -309,7 +306,6 @@ export function WallConsole() {
         ) : (
           <PresetRow
             label="COMPUTER 2 PRESETS"
-            value={computer2Preset.name}
             presets={PRESETS[2]}
             activeId={preset[2]}
             onSelect={(id) => setPreset((currentPreset) => ({ ...currentPreset, 2: id }))}
@@ -485,22 +481,19 @@ function ScreenButton({
 
 function PresetRow({
   label,
-  value,
   presets,
   activeId,
   onSelect,
 }: {
   label: string
-  value: string
   presets: Preset[]
   activeId: string
   onSelect: (id: string) => void
 }) {
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between gap-3">
+      <div className="mb-2">
         <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{label}</p>
-        <p className="text-xs text-cyan-100/70">{value}</p>
       </div>
       <div className={`grid grid-cols-2 gap-2 ${presets.length > 2 ? "sm:grid-cols-5" : "sm:grid-cols-2 sm:max-w-md"}`}>
         {presets.map((item) => (
