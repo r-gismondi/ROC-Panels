@@ -191,7 +191,7 @@ export function WallConsole() {
         <p className="hidden text-xs tracking-[0.18em] text-cyan-100/70 sm:block">THIS STAND</p>
       </header>
 
-      <section className="grid flex-1 gap-4 px-4 py-4 lg:grid-cols-[1fr_0.72fr_1.55fr] lg:px-6">
+      <section className="grid flex-1 items-start gap-4 px-4 py-4 lg:grid-cols-[4fr_minmax(16rem,18rem)_5fr] lg:px-6">
         <PanelFrame
           panel={1}
           title="Panel 1"
@@ -260,8 +260,9 @@ export function WallConsole() {
               {IDS[2].every((id) => power[id]) ? "ON" : IDS[2].every((id) => !power[id]) ? "OFF" : "MIXED"}
             </span>
           </div>
-          <div className="flex items-stretch gap-2">
+          <div className="grid items-stretch gap-2 lg:grid-cols-5">
             <ComputerFrame
+              className="lg:col-span-4"
               title="Computer 2"
               detail="192.168.0.102"
               rows={COMPUTER_2}
@@ -273,6 +274,7 @@ export function WallConsole() {
               onSelectScreen={(screen) => setSelection({ panel: 2, screen })}
             />
             <ComputerFrame
+              className="lg:col-span-1"
               title="Computer 3"
               detail="192.168.0.103"
               rows={COMPUTER_3}
@@ -280,7 +282,6 @@ export function WallConsole() {
               selected={computer3Scope}
               selection={selection}
               power={power}
-              narrow
               onSelectFrame={() => setSelection({ panel: 2, screen: "computer-3" })}
               onSelectScreen={(screen) => setSelection({ panel: 2, screen })}
             />
@@ -390,6 +391,7 @@ function PanelFrame({
 }
 
 function ComputerFrame({
+  className = "",
   title,
   detail,
   rows,
@@ -397,10 +399,10 @@ function ComputerFrame({
   selected,
   selection,
   power,
-  narrow = false,
   onSelectFrame,
   onSelectScreen,
 }: {
+  className?: string
   title: string
   detail: string
   rows: Screen[][]
@@ -408,7 +410,6 @@ function ComputerFrame({
   selected: boolean
   selection: Selection
   power: Record<string, boolean>
-  narrow?: boolean
   onSelectFrame: () => void
   onSelectScreen: (screen: string) => void
 }) {
@@ -418,12 +419,10 @@ function ComputerFrame({
         event.stopPropagation()
         onSelectFrame()
       }}
-      className={`rounded-xl border p-2 ${narrow ? "w-[5.4rem] shrink-0" : "min-w-0 flex-1"} ${
-        selected ? "border-white bg-white/5" : "border-cyan-300/35"
-      }`}
+      className={`min-w-0 rounded-xl border p-2 ${className} ${selected ? "border-white bg-white/5" : "border-cyan-300/35"}`}
     >
-      <p className="text-[10px] leading-tight font-semibold tracking-[0.12em] uppercase">{title}</p>
-      <p className="mb-2 text-[10px] leading-tight break-all text-cyan-100/70">{detail}</p>
+      <p className="truncate text-[11px] font-semibold tracking-[0.08em] whitespace-nowrap uppercase">{title}</p>
+      <p className="mb-2 truncate text-[10px] whitespace-nowrap text-cyan-100/70">{detail}</p>
       <div className="flex flex-col gap-2">
         {rows.map((row) => (
           <div key={row[0].id} className="grid gap-2" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>
