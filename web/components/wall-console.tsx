@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Slider } from "@/components/ui/slider"
 
 type PanelId = 1 | 2
@@ -111,6 +111,18 @@ export function WallConsole() {
   const [computer3Preset, setComputer3Preset] = useState("independent")
   const [power, setPower] = useState<Record<string, boolean>>(initialPower)
   const [brightness, setBrightness] = useState<Record<string, number>>(initialBrightness)
+  const controlRef = useRef<HTMLDivElement>(null)
+  const [controlHeight, setControlHeight] = useState<number>()
+
+  useEffect(() => {
+    const control = controlRef.current
+    if (!control) return
+    const measure = () => setControlHeight(control.offsetHeight)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(control)
+    return () => observer.disconnect()
+  }, [])
 
   const panel = selection.panel
   const computer3Scope = selection.panel === 2 && (selection.screen === "computer-3" || COMPUTER_3_IDS.includes(selection.screen))
@@ -191,7 +203,7 @@ export function WallConsole() {
         <p className="hidden text-xs tracking-[0.18em] text-cyan-100/70 sm:block">THIS STAND</p>
       </header>
 
-      <section className="grid flex-1 items-start gap-4 px-4 py-4 lg:grid-cols-[4fr_minmax(16rem,18rem)_5fr] lg:px-6">
+      <section className="grid items-start gap-4 px-4 py-4 lg:grid-cols-[4fr_minmax(16rem,18rem)_5fr] lg:px-6">
         <PanelFrame
           panel={1}
           title="Panel 1"
@@ -201,10 +213,10 @@ export function WallConsole() {
           selection={selection}
           power={power}
           onSelect={setSelection}
+          height={controlHeight}
         />
 
-        <div className="flex flex-col gap-4 self-start">
-          <div className="flex flex-col justify-center gap-4 rounded-2xl border border-cyan-300/40 bg-[#0a2f86]/55 p-4 shadow-[0_0_28px_rgba(40,140,255,0.25)]">
+        <div ref={controlRef} className="flex flex-col justify-center gap-4 rounded-2xl border border-cyan-300/40 bg-[#0a2f86]/55 p-4 shadow-[0_0_28px_rgba(40,140,255,0.25)]">
             <div>
               <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{scopeLabel}</p>
               <h1 className="mt-1 text-3xl font-semibold tracking-wide">{scopeTitle}</h1>
@@ -239,17 +251,17 @@ export function WallConsole() {
               {selection.screen === "all" ? `panel ${panel}` : scopeTitle}. Nothing is sent to the displays yet.
             </p>
           </div>
-        </div>
 
         <section
           onClick={() => setSelection({ panel: 2, screen: "all" })}
-          className={`cursor-pointer rounded-2xl border bg-[#071a4d]/70 p-3 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
+          className={`flex cursor-pointer flex-col rounded-2xl border bg-[#071a4d]/70 p-3 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
             selection.panel === 2 && selection.screen === "all"
               ? "border-white shadow-[0_0_24px_rgba(180,230,255,0.35)]"
               : selection.panel === 2
                 ? "border-cyan-300/70"
                 : "border-cyan-300/25"
           }`}
+          style={controlHeight ? { height: controlHeight } : undefined}
         >
           <div className="mb-3 flex items-end justify-between gap-2">
             <div>
@@ -260,7 +272,7 @@ export function WallConsole() {
               {IDS[2].every((id) => power[id]) ? "ON" : IDS[2].every((id) => !power[id]) ? "OFF" : "MIXED"}
             </span>
           </div>
-          <div className="grid items-stretch gap-2 lg:grid-cols-5">
+          <div className="grid min-h-0 flex-1 items-stretch gap-2 lg:grid-cols-5">
             <ComputerFrame
               className="lg:col-span-4"
               title="Computer 2"
@@ -326,6 +338,7 @@ function PanelFrame({
   selection,
   power,
   onSelect,
+  height,
 }: {
   panel: PanelId
   title: string
@@ -335,6 +348,7 @@ function PanelFrame({
   selection: Selection
   power: Record<string, boolean>
   onSelect: (selection: Selection) => void
+  height?: number
 }) {
   const ids = rows.flat().map((screen) => screen.id)
   const whole = selection.panel === panel && selection.screen === "all"
@@ -344,9 +358,10 @@ function PanelFrame({
   return (
     <section
       onClick={() => onSelect({ panel, screen: "all" })}
-      className={`cursor-pointer rounded-2xl border bg-[#071a4d]/70 p-3 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
+      className={`flex cursor-pointer flex-col rounded-2xl border bg-[#071a4d]/70 p-3 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
         whole ? "border-white shadow-[0_0_24px_rgba(180,230,255,0.35)]" : selection.panel === panel ? "border-cyan-300/70" : "border-cyan-300/25"
       }`}
+      style={height ? { height } : undefined}
     >
       <div className="mb-3 flex items-end justify-between gap-2">
         <div>
@@ -355,9 +370,9 @@ function PanelFrame({
         </div>
         <span className="text-[11px] tracking-[0.14em] text-cyan-100/80">{allOn ? "ON" : allOff ? "OFF" : "MIXED"}</span>
       </div>
-      <div className="flex flex-col gap-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-2">
         {rows.map((row) => (
-          <div key={row[0].id} className="grid gap-2" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>
+          <div key={row[0].id} className="grid min-h-0 flex-1 gap-2" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>
             {row.map((screen) => {
               const group = preset.groups[screen.id] ?? 0
               const color = GROUP_COLOR[group % GROUP_COLOR.length]
@@ -371,7 +386,7 @@ function PanelFrame({
                     event.stopPropagation()
                     onSelect({ panel, screen: screen.id })
                   }}
-                  className="min-h-16 rounded-lg border px-1 py-2 text-center transition"
+                  className="h-full min-h-0 rounded-lg border px-1 py-2 text-center transition"
                   style={{
                     borderColor: isSelected ? "#ffffff" : color,
                     background: on ? `${color}33` : "rgba(0,0,0,0.45)",
@@ -419,13 +434,13 @@ function ComputerFrame({
         event.stopPropagation()
         onSelectFrame()
       }}
-      className={`min-w-0 rounded-xl border p-2 ${className} ${selected ? "border-white bg-white/5" : "border-cyan-300/35"}`}
+      className={`flex h-full min-h-0 min-w-0 flex-col rounded-xl border p-2 ${className} ${selected ? "border-white bg-white/5" : "border-cyan-300/35"}`}
     >
       <p className="truncate text-[11px] font-semibold tracking-[0.08em] whitespace-nowrap uppercase">{title}</p>
       <p className="mb-2 truncate text-[10px] whitespace-nowrap text-cyan-100/70">{detail}</p>
-      <div className="flex flex-col gap-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-2">
         {rows.map((row) => (
-          <div key={row[0].id} className="grid gap-2" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>
+          <div key={row[0].id} className="grid min-h-0 flex-1 gap-2" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>
             {row.map((screen) => (
               <ScreenButton
                 key={screen.id}
@@ -465,7 +480,7 @@ function ScreenButton({
         event.stopPropagation()
         onSelect()
       }}
-      className="min-h-16 rounded-lg border px-1 py-2 text-center transition"
+      className="h-full min-h-0 rounded-lg border px-1 py-2 text-center transition"
       style={{
         borderColor: selected ? "#ffffff" : color,
         background: on ? `${color}33` : "rgba(0,0,0,0.45)",
