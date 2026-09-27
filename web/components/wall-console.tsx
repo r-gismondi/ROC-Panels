@@ -271,7 +271,7 @@ export function WallConsole() {
               {allOn ? "Power on" : allOff ? "Power off" : "Power is mixed"} for{" "}
               {selection.screen === "all" ? `panel ${panel}` : scopeTitle}. Power and brightness stay on this page.
             </p>
-            <p className="min-h-10 text-xs leading-5 text-cyan-100">{layoutStatus}</p>
+            <p className="min-h-10 whitespace-pre-wrap text-xs leading-5 text-cyan-100">{layoutStatus}</p>
           </div>
 
         <section

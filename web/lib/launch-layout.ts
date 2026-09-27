@@ -1,5 +1,6 @@
 import { execFile } from "child_process"
 import { promisify } from "util"
+import path from "path"
 
 const execFileAsync = promisify(execFile)
 
@@ -23,8 +24,6 @@ const ALLOWED: Record<string, string[]> = {
   "103": ["independent", "full"],
 }
 
-const TASK = "WallLayout"
-
 export type LaunchResult = { ok: true; message: string } | { ok: false; message: string }
 
 export function layoutCommand(computer: string, preset: string) {
@@ -32,30 +31,13 @@ export function layoutCommand(computer: string, preset: string) {
   const allowed = ALLOWED[computer]
   const bat = BATS[preset]
   if (!host || !allowed || !bat || !allowed.includes(preset)) return null
-  return {
-    host,
-    bat,
-    path: `C:\\layouts\\computer-${computer}\\${bat}`,
-    label:
-      preset === "focus-split" ? "Focus split" : preset.charAt(0).toUpperCase() + preset.slice(1),
-  }
+  const label = preset === "focus-split" ? "Focus split" : preset.charAt(0).toUpperCase() + preset.slice(1)
+  return { host, bat, path: `C:\\layouts\\computer-${computer}\\${bat}`, label }
 }
 
 function redact(text: string, password: string) {
   if (!password) return text
   return text.split(password).join("***")
-}
-
-async function schtasks(args: string[], password: string) {
-  try {
-    const { stdout } = await execFileAsync("schtasks.exe", args, { windowsHide: true, timeout: 30000 })
-    return { ok: true as const, text: stdout.trim() }
-  } catch (error) {
-    const failed = error as { code?: string; stdout?: string; stderr?: string; message?: string }
-    if (failed.code === "ENOENT") return { ok: false as const, text: "schtasks was not found." }
-    const text = redact(`${failed.stdout ?? ""}\n${failed.stderr ?? ""}`.trim() || failed.message || "The layout task failed.", password)
-    return { ok: false as const, text }
-  }
 }
 
 export async function launchLayout(computer: string, preset: string): Promise<LaunchResult> {
@@ -71,26 +53,52 @@ export async function launchLayout(computer: string, preset: string): Promise<La
   const password = process.env.LAYOUT_PASSWORD || ""
   if (!password) return { ok: false, message: "Set LAYOUT_PASSWORD to the wall Administrator password, then restart this page." }
 
-  const auth = ["/S", command.host, "/U", user, "/P", password]
-  await schtasks(["/End", ...auth, "/TN", TASK], password)
-
-  const created = await schtasks(
-    ["/Create", ...auth, "/RU", user, "/SC", "ONCE", "/ST", "00:00", "/TN", TASK, "/TR", command.path, "/F", "/IT"],
-    password,
-  )
-  const task = created.ok
-    ? created
-    : await schtasks(
-        ["/Create", ...auth, "/RU", user, "/RP", password, "/SC", "ONCE", "/ST", "00:00", "/RL", "HIGHEST", "/TN", TASK, "/TR", command.path, "/F"],
-        password,
-      )
-  if (!task.ok) return { ok: false, message: task.text }
-
-  const started = await schtasks(["/Run", ...auth, "/TN", TASK], password)
-  if (!started.ok) return { ok: false, message: started.text }
-  if (created.ok) return { ok: true, message: `Opened ${command.label} on ${command.host}.` }
-  return {
-    ok: true,
-    message: `Started ${command.label} on ${command.host}. Windows may stay off the desktop because the interactive option was rejected.`,
+  const helper = path.join(process.cwd(), "scripts", "Launch-InSession.ps1")
+  const script = `
+$ErrorActionPreference = 'Continue'
+$HostName = ${psString(command.host)}
+$User = ${psString(user)}
+$Pass = ${psString(password)}
+$Bat = ${psString(command.path)}
+$Helper = ${psString(helper)}
+$Label = ${psString(command.label)}
+function Out-Line($Text) { Write-Output $Text }
+if (@(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object IPAddress) -contains $HostName) {
+  Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','start','""',$Bat -WorkingDirectory (Split-Path $Bat)
+  Out-Line "Opened $Label on this computer ($HostName)."
+  exit 0
+}
+$share = "\\\\$HostName\\c$"
+$net = & net.exe use $share "/user:$User" $Pass 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) { Out-Line "Could not open $share"; Out-Line $net; exit 1 }
+Copy-Item -LiteralPath $Helper -Destination "\\\\$HostName\\c$\\layouts\\Launch-InSession.ps1" -Force
+& schtasks.exe /End /S $HostName /U $User /P $Pass /TN WallLayout 2>$null | Out-Null
+$tr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\layouts\\Launch-InSession.ps1 -Bat ' + $Bat
+$create = & schtasks.exe /Create /S $HostName /U $User /P $Pass /RU SYSTEM /SC ONCE /ST 00:00 /RL HIGHEST /TN WallLayout /TR $tr /F 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) { Out-Line $create; exit 1 }
+$run = & schtasks.exe /Run /S $HostName /U $User /P $Pass /TN WallLayout 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) { Out-Line $run; exit 1 }
+Start-Sleep -Seconds 2
+$resultPath = "\\\\$HostName\\c$\\layouts\\launch-result.txt"
+if (Test-Path -LiteralPath $resultPath) { Get-Content -LiteralPath $resultPath -Raw } else { Out-Line "Started $Label on $HostName. No result was written yet." }
+exit 0
+`
+  try {
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+      { windowsHide: true, timeout: 45000 },
+    )
+    const message = redact(stdout.trim(), password) || `Opened ${command.label} on ${command.host}.`
+    return { ok: true, message }
+  } catch (error) {
+    const failed = error as { code?: string; stdout?: string; stderr?: string; message?: string }
+    if (failed.code === "ENOENT") return { ok: false, message: "PowerShell was not found." }
+    const message = redact(`${failed.stdout ?? ""}\n${failed.stderr ?? ""}`.trim() || failed.message || "The layout did not start.", password)
+    return { ok: false, message }
   }
+}
+
+function psString(value: string) {
+  return `'${value.replaceAll("'", "''")}'`
 }
