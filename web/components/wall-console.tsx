@@ -298,23 +298,22 @@ export function WallConsole() {
             activeId={preset[1]}
             onSelect={(id) => setPreset((currentPreset) => ({ ...currentPreset, 1: id }))}
           />
+        ) : computer3Scope ? (
+          <PresetRow
+            label="COMPUTER 3 PRESETS"
+            value={activeComputer3Preset.name}
+            presets={COMPUTER_3_PRESETS}
+            activeId={computer3Preset}
+            onSelect={setComputer3Preset}
+          />
         ) : (
-          <div className="flex flex-col gap-3">
-            <PresetRow
-              label="COMPUTER 2 · 192.168.0.102"
-              value={computer2Preset.name}
-              presets={PRESETS[2]}
-              activeId={preset[2]}
-              onSelect={(id) => setPreset((currentPreset) => ({ ...currentPreset, 2: id }))}
-            />
-            <PresetRow
-              label="COMPUTER 3 · 192.168.0.103"
-              value={activeComputer3Preset.name}
-              presets={COMPUTER_3_PRESETS}
-              activeId={computer3Preset}
-              onSelect={setComputer3Preset}
-            />
-          </div>
+          <PresetRow
+            label="COMPUTER 2 PRESETS"
+            value={computer2Preset.name}
+            presets={PRESETS[2]}
+            activeId={preset[2]}
+            onSelect={(id) => setPreset((currentPreset) => ({ ...currentPreset, 2: id }))}
+          />
         )}
       </footer>
     </main>
