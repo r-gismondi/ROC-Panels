@@ -283,6 +283,22 @@ export function WallConsole() {
     }
   }
 
+  async function runVnc(computer: "101" | "102" | "103") {
+    const name = computer === "101" ? "Computer 1" : computer === "102" ? "Computer 2" : "Computer 3"
+    setLayoutStatus(`Opening VNC to ${name}…`)
+    try {
+      const response = await fetch("/api/vnc", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ computer }),
+      })
+      const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null
+      setLayoutStatus(body?.message || body?.error || "VNC did not open.")
+    } catch {
+      setLayoutStatus("Could not reach the layout service.")
+    }
+  }
+
   const addressComputer = current ? COMPUTER_OF[current.id] : null
   const addressPreset =
     addressComputer === "103"
@@ -547,6 +563,14 @@ export function WallConsole() {
             void runLayout(footer.computer, "close")
           }}
         />
+        <div className="mt-3 border-t border-cyan-300/25 pt-3">
+          <p className="mb-2 text-[11px] tracking-[0.2em] text-cyan-100/70">VNC</p>
+          <div className="grid grid-cols-3 gap-2 sm:max-w-xl">
+            <GlowButton onClick={() => void runVnc("101")}>Computer 1</GlowButton>
+            <GlowButton onClick={() => void runVnc("102")}>Computer 2</GlowButton>
+            <GlowButton onClick={() => void runVnc("103")}>Computer 3</GlowButton>
+          </div>
+        </div>
       </footer>
       {keyboardOpen && current ? (
         <AddressKeyboard

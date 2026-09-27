@@ -305,3 +305,32 @@ export async function setLayoutAddress(computer: string, screen: string, url: st
   }
   return { ok: false, message: "The screen did not open that address." }
 }
+
+const VNC_NAMES: Record<string, string> = {
+  "101": "Computer 1",
+  "102": "Computer 2",
+  "103": "Computer 3",
+}
+
+export function openVnc(computer: string): LaunchResult {
+  const host = HOSTS[computer]
+  const name = VNC_NAMES[computer]
+  if (!host || !name) return { ok: false, message: "That computer is not on this stand." }
+  if (process.platform !== "win32") {
+    return { ok: false, message: "Run this page on the touchscreen computer to open VNC." }
+  }
+  const shortcut = path.join("C:\\Program Files\\RealVNC\\VNC Viewer", `${host}.lnk`)
+  if (!fs.existsSync(shortcut)) return { ok: false, message: `The VNC shortcut for ${host} was not found.` }
+  const viewer = spawn("explorer.exe", [shortcut], { detached: true, stdio: "ignore", windowsHide: true })
+  viewer.unref()
+  const button = path.join(process.cwd(), "scripts", "Show-KeyboardButton.ps1")
+  const keyboard = spawn(
+    "powershell.exe",
+    ["-NoProfile", "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", button],
+    { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+  )
+  keyboard.stdout.resume()
+  keyboard.stderr.resume()
+  keyboard.unref()
+  return { ok: true, message: `Opened VNC to ${name} (${host}).` }
+}
