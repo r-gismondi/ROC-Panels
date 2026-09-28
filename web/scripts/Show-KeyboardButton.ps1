@@ -367,8 +367,24 @@ Add-KeyRow @("a", "s", "d", "f", "g", "h", "j", "k", "l") $true
 Add-KeyRow @("z", "x", "c", "v", "b", "n", "m", ".", "-", "_") $true
 Add-KeyRow @("https://", "www.", "/", ":", ".com", "?", "&", "=", "#", "%") $false
 
-$windowsButton = New-Key ([string][char]0xE782) { [VncKeyboardWin]::Tap([uint16]0x5B, $false) } 12
+$windowsButton = New-Key "" { [VncKeyboardWin]::Tap([uint16]0x5B, $false) } 12
 $windowsButton.Name = "logo"
+$windowsButton.Add_Paint({
+    param($sender, $eventArgs)
+    $bounds = $sender.ClientRectangle
+    $side = [Math]::Min($bounds.Width, $bounds.Height) * 0.46
+    if ($side -lt 8) { return }
+    $pane = $side * 0.42
+    $gap = $side * 0.16
+    $originX = ($bounds.Width - ((2 * $pane) + $gap)) / 2
+    $originY = ($bounds.Height - ((2 * $pane) + $gap)) / 2
+    $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
+    $eventArgs.Graphics.FillRectangle($brush, $originX, $originY, $pane, $pane)
+    $eventArgs.Graphics.FillRectangle($brush, ($originX + $pane + $gap), $originY, $pane, $pane)
+    $eventArgs.Graphics.FillRectangle($brush, $originX, ($originY + $pane + $gap), $pane, $pane)
+    $eventArgs.Graphics.FillRectangle($brush, ($originX + $pane + $gap), ($originY + $pane + $gap), $pane, $pane)
+    $brush.Dispose()
+})
 $shiftButton = New-Key "Shift" { $script:shift = -not $script:shift; Update-ShiftLabels } 12
 $spaceButton = New-Key "Space" { [VncKeyboardWin]::Tap([uint16]0x20, $false) } 12
 $backButton = New-Key "Backspace" { [VncKeyboardWin]::Tap([uint16]0x08, $false) } 12
@@ -396,11 +412,10 @@ function Update-KeyboardLayout {
     if ([Math]::Abs($script:keyFontSize - $fontSize) -gt 0.4) {
         $script:keyFontSize = $fontSize
         $textFont = New-Object System.Drawing.Font "Segoe UI", $fontSize
-        $logoFont = New-Object System.Drawing.Font "Segoe MDL2 Assets", $fontSize
         $dragLabel.Font = New-Object System.Drawing.Font "Segoe UI", ([Math]::Max(9, [Math]::Min(14, $barH * 0.38)))
         foreach ($row in $script:keyRows) {
             foreach ($button in $row.Buttons) {
-                if ($button.Name -eq "logo") { $button.Font = $logoFont } else { $button.Font = $textFont }
+                if ($button.Name -ne "logo") { $button.Font = $textFont }
             }
         }
     }
