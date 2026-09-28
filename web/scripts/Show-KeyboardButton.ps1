@@ -206,8 +206,10 @@ function Send-Text([string]$text) {
 function New-Key([string]$text, [scriptblock]$onClick, [double]$fontSize) {
     $button = New-Object System.Windows.Forms.Button
     $button.Text = $text
-    $button.Dock = [System.Windows.Forms.DockStyle]::Fill
-    $button.Margin = New-Object System.Windows.Forms.Padding 4
+    $button.AutoSize = $false
+    $button.MinimumSize = New-Object System.Drawing.Size 0, 0
+    $button.Dock = [System.Windows.Forms.DockStyle]::None
+    $button.Margin = New-Object System.Windows.Forms.Padding 0
     $button.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
     $button.FlatAppearance.BorderSize = 1
     $button.FlatAppearance.BorderColor = $keyBorder
@@ -223,39 +225,37 @@ function New-Key([string]$text, [scriptblock]$onClick, [double]$fontSize) {
         & $sender.Tag
     })
     $button.Tag = $onClick
-    Set-Round $button
     return $button
 }
 
-function Add-KeyRow($parent, [int]$rowIndex, [string[]]$labels, [double]$fontSize, [bool]$letters) {
-    $row = New-Object System.Windows.Forms.TableLayoutPanel
-    $row.Dock = [System.Windows.Forms.DockStyle]::Fill
-    $row.Margin = New-Object System.Windows.Forms.Padding 0
-    $row.BackColor = $panelBg
-    $row.RowCount = 1
-    $row.ColumnCount = $labels.Count
-    [void]$row.RowStyles.Add((New-Object System.Windows.Forms.RowStyle ([System.Windows.Forms.SizeType]::Percent, 100)))
+$script:keyRows = New-Object System.Collections.ArrayList
+function Add-KeyRow([string[]]$labels, [bool]$letters, [int[]]$weights) {
+    $buttons = New-Object System.Collections.Generic.List[System.Windows.Forms.Button]
+    if (-not $weights -or $weights.Count -ne $labels.Count) {
+        $weights = @()
+        foreach ($ignored in $labels) { $weights += 1 }
+    }
     for ($index = 0; $index -lt $labels.Count; $index++) {
-        [void]$row.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle ([System.Windows.Forms.SizeType]::Percent, (100 / $labels.Count))))
         $label = $labels[$index]
         if ($letters -and $label -match '^[a-z]$') {
             $lower = $label
-            $button = New-Key $lower { param($source) } $fontSize
+            $button = New-Key $lower { } 12
             $captured = $lower
             $button.Tag = { Send-Char $captured $script:shift; if ($script:shift) { $script:shift = $false; Update-ShiftLabels } }.GetNewClosure()
             $script:shiftables += [PSCustomObject]@{ Button = $button; Lower = $lower; Upper = $lower.ToUpper() }
         } elseif ($label -in @("https://", "www.", ".com")) {
             $captured = $label
-            $button = New-Key $label { } $fontSize
+            $button = New-Key $label { } 12
             $button.Tag = { Send-Text $captured }.GetNewClosure()
         } else {
             $captured = $label
-            $button = New-Key $label { } $fontSize
+            $button = New-Key $label { } 12
             $button.Tag = { Send-Char $captured $false }.GetNewClosure()
         }
-        $row.Controls.Add($button, $index, 0)
+        $keyboard.Controls.Add($button)
+        [void]$buttons.Add($button)
     }
-    $parent.Controls.Add($row, 0, $rowIndex)
+    [void]$script:keyRows.Add([PSCustomObject]@{ Buttons = $buttons.ToArray(); Weights = $weights })
 }
 
 $screen = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position)
@@ -302,8 +302,8 @@ $keyboard.Bounds = New-Object System.Drawing.Rectangle $keyboardX, $keyboardY, $
 $script:keyboardPlaced = $false
 
 $dragBar = New-Object System.Windows.Forms.Panel
-$dragBar.Dock = [System.Windows.Forms.DockStyle]::Top
-$dragBar.Height = 44
+$dragBar.Dock = [System.Windows.Forms.DockStyle]::None
+$dragBar.Height = 36
 $dragBar.BackColor = [System.Drawing.Color]::FromArgb(7, 26, 77)
 $dragBar.Cursor = [System.Windows.Forms.Cursors]::SizeAll
 $keyboard.Controls.Add($dragBar)
@@ -356,54 +356,78 @@ $dragLabel.Add_MouseMove({ Move-Drag })
 $dragLabel.Add_MouseUp({ Stop-Drag })
 
 $accent = New-Object System.Windows.Forms.Panel
-$accent.Dock = [System.Windows.Forms.DockStyle]::Top
-$accent.Height = 3
+$accent.Dock = [System.Windows.Forms.DockStyle]::None
+$accent.Height = 2
 $accent.BackColor = $cyan
 $keyboard.Controls.Add($accent)
 
-$table = New-Object System.Windows.Forms.TableLayoutPanel
-$table.Dock = [System.Windows.Forms.DockStyle]::Fill
-$table.BackColor = $panelBg
-$table.Padding = New-Object System.Windows.Forms.Padding 8, 8, 8, 8
-$table.ColumnCount = 1
-$table.RowCount = 6
-[void]$table.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle ([System.Windows.Forms.SizeType]::Percent, 100)))
-for ($rowIndex = 0; $rowIndex -lt 6; $rowIndex++) {
-    [void]$table.RowStyles.Add((New-Object System.Windows.Forms.RowStyle ([System.Windows.Forms.SizeType]::Percent, 16.6)))
-}
-$keyboard.Controls.Add($table)
-$table.SendToBack()
+Add-KeyRow @("1", "2", "3", "4", "5", "6", "7", "8", "9", "0") $false
+Add-KeyRow @("q", "w", "e", "r", "t", "y", "u", "i", "o", "p") $true
+Add-KeyRow @("a", "s", "d", "f", "g", "h", "j", "k", "l") $true
+Add-KeyRow @("z", "x", "c", "v", "b", "n", "m", ".", "-", "_") $true
+Add-KeyRow @("https://", "www.", "/", ":", ".com", "?", "&", "=", "#", "%") $false
 
-Add-KeyRow $table 0 @("1", "2", "3", "4", "5", "6", "7", "8", "9", "0") 18 $false
-Add-KeyRow $table 1 @("q", "w", "e", "r", "t", "y", "u", "i", "o", "p") 18 $true
-Add-KeyRow $table 2 @("a", "s", "d", "f", "g", "h", "j", "k", "l") 18 $true
-Add-KeyRow $table 3 @("z", "x", "c", "v", "b", "n", "m", ".", "-", "_") 18 $true
-Add-KeyRow $table 4 @("https://", "www.", "/", ":", ".com", "?", "&", "=", "#", "%") 13 $false
-
-$actions = New-Object System.Windows.Forms.TableLayoutPanel
-$actions.Dock = [System.Windows.Forms.DockStyle]::Fill
-$actions.Margin = New-Object System.Windows.Forms.Padding 0
-$actions.BackColor = $panelBg
-$actions.RowCount = 1
-$actions.ColumnCount = 6
-[void]$actions.RowStyles.Add((New-Object System.Windows.Forms.RowStyle ([System.Windows.Forms.SizeType]::Percent, 100)))
-foreach ($width in @(14, 14, 30, 14, 14, 14)) {
-    [void]$actions.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle ([System.Windows.Forms.SizeType]::Percent, $width)))
-}
-$windowsButton = New-Key ([string][char]0xE782) { [VncKeyboardWin]::Tap([uint16]0x5B, $false) } 22
-$windowsButton.Font = New-Object System.Drawing.Font "Segoe MDL2 Assets", 22
-$shiftButton = New-Key "Shift" { $script:shift = -not $script:shift; Update-ShiftLabels } 14
-$spaceButton = New-Key "Space" { [VncKeyboardWin]::Tap([uint16]0x20, $false) } 14
-$backButton = New-Key "Backspace" { [VncKeyboardWin]::Tap([uint16]0x08, $false) } 13
-$enterButton = New-Key "Enter" { [VncKeyboardWin]::Tap([uint16]0x0D, $false) } 14
+$windowsButton = New-Key ([string][char]0xE782) { [VncKeyboardWin]::Tap([uint16]0x5B, $false) } 12
+$windowsButton.Name = "logo"
+$shiftButton = New-Key "Shift" { $script:shift = -not $script:shift; Update-ShiftLabels } 12
+$spaceButton = New-Key "Space" { [VncKeyboardWin]::Tap([uint16]0x20, $false) } 12
+$backButton = New-Key "Backspace" { [VncKeyboardWin]::Tap([uint16]0x08, $false) } 12
+$enterButton = New-Key "Enter" { [VncKeyboardWin]::Tap([uint16]0x0D, $false) } 12
 $hideButton = New-Key "Hide keyboard" { $keyboard.Hide() } 12
-$actions.Controls.Add($windowsButton, 0, 0)
-$actions.Controls.Add($shiftButton, 1, 0)
-$actions.Controls.Add($spaceButton, 2, 0)
-$actions.Controls.Add($backButton, 3, 0)
-$actions.Controls.Add($enterButton, 4, 0)
-$actions.Controls.Add($hideButton, 5, 0)
-$table.Controls.Add($actions, 0, 5)
+foreach ($action in @($windowsButton, $shiftButton, $spaceButton, $backButton, $enterButton, $hideButton)) {
+    $keyboard.Controls.Add($action)
+}
+[void]$script:keyRows.Add([PSCustomObject]@{ Buttons = @($windowsButton, $shiftButton, $spaceButton, $backButton, $enterButton, $hideButton); Weights = @(14, 14, 30, 16, 14, 18) })
+
+$script:keyFontSize = -1
+function Update-KeyboardLayout {
+    $clientW = $keyboard.ClientSize.Width
+    $clientH = $keyboard.ClientSize.Height
+    if ($clientW -lt 40 -or $clientH -lt 40 -or $script:keyRows.Count -eq 0) { return }
+    $barH = [Math]::Max(28, [Math]::Min(40, [Math]::Floor($clientH * 0.07)))
+    $dragBar.SetBounds(0, 0, $clientW, $barH)
+    $accent.SetBounds(0, $barH, $clientW, 2)
+    $top = $barH + 6
+    $gap = [Math]::Max(3, [Math]::Floor($clientW / 220))
+    $rowCount = $script:keyRows.Count
+    $rowH = [Math]::Floor(($clientH - $top - ($gap * $rowCount)) / $rowCount)
+    if ($rowH -lt 8) { $rowH = 8 }
+    $fontSize = [Math]::Max(8, [Math]::Min(28, ($rowH * 0.38)))
+    if ([Math]::Abs($script:keyFontSize - $fontSize) -gt 0.4) {
+        $script:keyFontSize = $fontSize
+        $textFont = New-Object System.Drawing.Font "Segoe UI", $fontSize
+        $logoFont = New-Object System.Drawing.Font "Segoe MDL2 Assets", $fontSize
+        $dragLabel.Font = New-Object System.Drawing.Font "Segoe UI", ([Math]::Max(9, [Math]::Min(14, $barH * 0.38)))
+        foreach ($row in $script:keyRows) {
+            foreach ($button in $row.Buttons) {
+                if ($button.Name -eq "logo") { $button.Font = $logoFont } else { $button.Font = $textFont }
+            }
+        }
+    }
+    $y = $top
+    foreach ($row in $script:keyRows) {
+        $buttons = @($row.Buttons)
+        $weights = @($row.Weights)
+        $weightSum = 0
+        foreach ($weight in $weights) { $weightSum += $weight }
+        if ($weightSum -le 0) { $weightSum = $buttons.Count }
+        $inner = [Math]::Max(2, $gap)
+        $usable = $clientW - 8 - ($inner * ($buttons.Count - 1))
+        $x = 4
+        for ($index = 0; $index -lt $buttons.Count; $index++) {
+            $keyW = [Math]::Floor($usable * $weights[$index] / $weightSum)
+            if ($index -eq ($buttons.Count - 1)) { $keyW = $clientW - 4 - $x }
+            $buttons[$index].SetBounds($x, $y, [Math]::Max(8, $keyW), $rowH)
+            $x += $keyW + $inner
+        }
+        $y += $rowH + $inner
+    }
+    $dragBar.BringToFront()
+    $accent.BringToFront()
+    foreach ($control in @($keyboard.Controls)) {
+        if ($control.Tag -in @("nw", "ne", "sw", "se")) { $control.BringToFront() }
+    }
+}
 
 $script:resizing = $false
 $script:resizeCorner = ""
@@ -444,6 +468,7 @@ function Move-Resize {
     if ($w -gt $workArea.Width) { $w = $workArea.Width }
     if ($h -gt ($workArea.Height - 24)) { $h = $workArea.Height - 24 }
     $keyboard.Bounds = New-Object System.Drawing.Rectangle $x, $y, $w, $h
+    Update-KeyboardLayout
 }
 function New-Corner([string]$corner) {
     $grip = New-Object System.Windows.Forms.Panel
@@ -471,6 +496,13 @@ New-Corner "nw"
 New-Corner "ne"
 New-Corner "sw"
 New-Corner "se"
+$keyboard.Add_Resize({
+    Update-KeyboardLayout
+    foreach ($control in @($keyboard.Controls)) {
+        if ($control.Tag -in @("nw", "ne", "sw", "se")) { $control.BringToFront() }
+    }
+})
+Update-KeyboardLayout
 
 function Show-KeyboardPanel {
     Get-Process -Name osk -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -486,6 +518,7 @@ function Show-KeyboardPanel {
     $keyboard.Show()
     $keyboard.TopMost = $true
     [VncKeyboardWin]::StayOnTop($keyboard.Handle)
+    Update-KeyboardLayout
 }
 
 $icon.Add_MouseUp({
