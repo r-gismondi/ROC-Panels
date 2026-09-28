@@ -380,8 +380,6 @@ foreach ($zone in $presets[$Preset]) {
     $drawW = $zone.W
     $drawH = $zone.H
     if (($zone.X + $zone.W) -lt 3840) { $drawW += 2 }
-    if ($zone.H -lt 1080 -and ($zone.Y + $zone.H) -lt 1080) { $drawH += 8 }
-    elseif (($zone.Y + $zone.H) -lt 1080) { $drawH += 2 }
     Write-Output "Opening $($zone.Title)"
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
