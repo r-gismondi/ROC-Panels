@@ -564,7 +564,11 @@ export function WallConsole() {
           }}
         />
         <div className="mt-3 border-t border-cyan-300/25 pt-3">
-          <p className="mb-2 text-[11px] tracking-[0.2em] text-cyan-100/70">VNC</p>
+          <p className="mb-2 flex items-center gap-1.5 text-[11px] tracking-[0.2em] text-cyan-100/70">
+            <img src="/realvnc.png" alt="" width={20} height={20} className="size-5 shrink-0" />
+            VNC
+          </p>
+          <p className="mb-2 text-xs text-cyan-100/70">Opens on this screen. Close returns here.</p>
           <div className="grid grid-cols-3 gap-2 sm:max-w-xl">
             <GlowButton onClick={() => void runVnc("101")}>Computer 1</GlowButton>
             <GlowButton onClick={() => void runVnc("102")}>Computer 2</GlowButton>

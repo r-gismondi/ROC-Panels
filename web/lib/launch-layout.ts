@@ -319,10 +319,20 @@ export function openVnc(computer: string): LaunchResult {
   if (process.platform !== "win32") {
     return { ok: false, message: "Run this page on the touchscreen computer to open VNC." }
   }
+  const viewerPath = "C:\\Program Files\\RealVNC\\VNC Viewer\\vncviewer.exe"
   const shortcut = path.join("C:\\Program Files\\RealVNC\\VNC Viewer", `${host}.lnk`)
-  if (!fs.existsSync(shortcut)) return { ok: false, message: `The VNC shortcut for ${host} was not found.` }
-  const viewer = spawn("explorer.exe", [shortcut], { detached: true, stdio: "ignore", windowsHide: true })
-  viewer.unref()
+  if (!fs.existsSync(viewerPath) || !fs.existsSync(shortcut)) {
+    return { ok: false, message: `The VNC shortcut for ${host} was not found.` }
+  }
+  const sessionScript = path.join(process.cwd(), "scripts", "Show-VncSession.ps1")
+  const session = spawn(
+    "powershell.exe",
+    ["-NoProfile", "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", sessionScript, "-ComputerName", name, "-Address", host],
+    { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+  )
+  session.stdout.resume()
+  session.stderr.resume()
+  session.unref()
   const button = path.join(process.cwd(), "scripts", "Show-KeyboardButton.ps1")
   const keyboard = spawn(
     "powershell.exe",
@@ -332,5 +342,5 @@ export function openVnc(computer: string): LaunchResult {
   keyboard.stdout.resume()
   keyboard.stderr.resume()
   keyboard.unref()
-  return { ok: true, message: `Opened VNC to ${name} (${host}).` }
+  return { ok: true, message: `${name} is open on this screen. Use Close to come back.` }
 }
