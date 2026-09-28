@@ -13,7 +13,7 @@ $HomeUrl = "https://ccv2.mtllc.us/landing"
 $LayoutScreens = @("TV1", "TV2", "TV3", "TV4", "TV5", "TV6", "TV7", "TV8")
 
 if (-not ("PanelWin" -as [type])) {
-    $panelDll = "C:\layouts\PanelWin2.dll"
+    $panelDll = "C:\layouts\PanelWin3.dll"
     if (-not (Test-Path -LiteralPath $panelDll)) {
         Add-Type -OutputAssembly $panelDll -TypeDefinition @"
 using System;
@@ -153,9 +153,11 @@ public static class PanelWin {
         }
         int left, top, right, bottom;
         Measure(hwnd, out left, out top, out right, out bottom);
-        if (top < 40) top = 48;
+        if (top < 8) top = 48;
         int childW = w + left + right;
-        int childH = h + top + bottom;
+        int spill = bottom;
+        if (y + h < 1080) spill = 0;
+        int childH = h + top + spill;
         SetWindowRgn(host, IntPtr.Zero, false);
         PanelRect hostRect;
         bool hostOk = GetWindowRect(host, out hostRect)
