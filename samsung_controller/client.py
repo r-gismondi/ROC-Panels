@@ -9,6 +9,7 @@ from samsung_controller.protocol import (
     GET_COMMANDS,
     ProtocolError,
     build_get_packet,
+    build_set_packet,
     describe,
     parse_response,
 )
@@ -67,6 +68,25 @@ class ReadOnlyMdcClient:
         packet = build_get_packet(GET_COMMANDS[command_name], display_id)
         if packet[3] != 0:
             raise RuntimeError("refusing to send a non-empty MDC payload")
+        sock = self._socket
+        if sock is None:
+            raise PanelError("not connected")
+        try:
+            sock.sendall(packet)
+            message = self._read_message()
+        except (TimeoutError, OSError) as exc:
+            raise PanelError(str(exc) or exc.__class__.__name__) from exc
+        message["request"] = command_name
+        if message["ack"]:
+            message["fields"] = describe(command_name, message["data"])
+        else:
+            message["fields"] = {}
+        return message
+
+    def set(self, command_name: str, display_id: int, value: int) -> dict:
+        packet = build_set_packet(command_name, display_id, value)
+        if packet[3] != 1:
+            raise RuntimeError("refusing to send an unexpected MDC payload")
         sock = self._socket
         if sock is None:
             raise PanelError("not connected")

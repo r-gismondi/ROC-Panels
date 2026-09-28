@@ -144,6 +144,7 @@ export function WallConsole() {
   const [keyboardOpen, setKeyboardOpen] = useState(false)
   const [replaceAddress, setReplaceAddress] = useState(false)
   const layoutBusy = useRef(false)
+  const brightnessTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const controlRef = useRef<HTMLDivElement>(null)
   const [controlHeight, setControlHeight] = useState<number>()
 
@@ -161,6 +162,38 @@ export function WallConsole() {
     if (!SCREENS.some((screen) => screen.id === selection.screen)) setKeyboardOpen(false)
     else setReplaceAddress(true)
   }, [selection])
+
+  useEffect(() => {
+    return () => {
+      if (brightnessTimer.current) clearTimeout(brightnessTimer.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancel = false
+    void (async () => {
+      try {
+        const response = await fetch("/api/display")
+        const body = (await response.json()) as { screens?: Record<string, { power: boolean; brightness: number }> }
+        if (cancel || !body.screens) return
+        setPower((currentPower) => {
+          const next = { ...currentPower }
+          for (const [id, value] of Object.entries(body.screens ?? {})) next[id] = value.power
+          return next
+        })
+        setBrightness((currentBrightness) => {
+          const next = { ...currentBrightness }
+          for (const [id, value] of Object.entries(body.screens ?? {})) next[id] = value.brightness
+          return next
+        })
+      } catch {
+        // The controls keep their last values until a display answers.
+      }
+    })()
+    return () => {
+      cancel = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancel = false
@@ -228,24 +261,87 @@ export function WallConsole() {
           ? "Screens 13 and 18 on 192.168.0.103. Tap the panel edge to adjust every screen on panel 2."
           : `${current?.hdmi}. Tap the panel around the screens to adjust all of them.`
 
-  function applyPower(on: boolean) {
+  async function applyPower(on: boolean) {
+    const screens = [...targets]
+    const previous: Record<string, boolean> = {}
+    screens.forEach((id) => {
+      previous[id] = power[id]
+    })
     setPower((currentPower) => {
       const next = { ...currentPower }
-      targets.forEach((id) => {
+      screens.forEach((id) => {
         next[id] = on
       })
       return next
     })
+    setLayoutStatus(on ? "Turning the screens on…" : "Turning the screens off…")
+    try {
+      const response = await fetch("/api/display", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ screens, power: on }),
+      })
+      const body = (await response.json().catch(() => null)) as { message?: string; error?: string; failed?: string[] } | null
+      const failed = new Set(body?.failed ?? (response.ok ? [] : screens))
+      if (!response.ok || failed.size > 0) {
+        setPower((currentPower) => {
+          const next = { ...currentPower }
+          failed.forEach((id) => {
+            if (id in previous) next[id] = previous[id]
+          })
+          return next
+        })
+      }
+      setLayoutStatus(body?.message || body?.error || "The screens did not change.")
+    } catch {
+      setPower((currentPower) => ({ ...currentPower, ...previous }))
+      setLayoutStatus("Could not reach the displays.")
+    }
   }
 
   function applyBrightness(level: number) {
+    const screens = [...targets]
+    const previous: Record<string, number> = {}
+    screens.forEach((id) => {
+      previous[id] = brightness[id]
+    })
     setBrightness((currentBrightness) => {
       const next = { ...currentBrightness }
-      targets.forEach((id) => {
+      screens.forEach((id) => {
         next[id] = level
       })
       return next
     })
+    if (brightnessTimer.current) clearTimeout(brightnessTimer.current)
+    brightnessTimer.current = setTimeout(() => {
+      void sendBrightness(screens, level, previous)
+    }, 300)
+  }
+
+  async function sendBrightness(screens: string[], level: number, previous: Record<string, number>) {
+    setLayoutStatus("Setting the brightness…")
+    try {
+      const response = await fetch("/api/display", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ screens, brightness: level }),
+      })
+      const body = (await response.json().catch(() => null)) as { message?: string; error?: string; failed?: string[] } | null
+      const failed = new Set(body?.failed ?? (response.ok ? [] : screens))
+      if (!response.ok || failed.size > 0) {
+        setBrightness((currentBrightness) => {
+          const next = { ...currentBrightness }
+          failed.forEach((id) => {
+            if (id in previous) next[id] = previous[id]
+          })
+          return next
+        })
+      }
+      setLayoutStatus(body?.message || body?.error || "The brightness did not change.")
+    } catch {
+      setBrightness((currentBrightness) => ({ ...currentBrightness, ...previous }))
+      setLayoutStatus("Could not reach the displays.")
+    }
   }
 
   const footer =
@@ -473,7 +569,7 @@ export function WallConsole() {
 
             <p className="text-xs leading-5 text-cyan-100/70">
               {allOn ? "Power on" : allOff ? "Power off" : "Power is mixed"} for{" "}
-              {selection.screen === "all" ? `panel ${panel}` : scopeTitle}. Power and brightness stay on this page.
+              {selection.screen === "all" ? `panel ${panel}` : scopeTitle}.
             </p>
             <p className="min-h-10 whitespace-pre-wrap text-xs leading-5 text-cyan-100">{layoutStatus}</p>
           </div>

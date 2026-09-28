@@ -1,4 +1,8 @@
-"""Samsung MDC packet codec limited to empty get requests."""
+"""Samsung MDC packet codec.
+
+Get packets always have an empty payload. Set packets are limited to power
+and brightness commands used by the wall console.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +13,13 @@ NAK = 0x4E
 
 # Commands the probe is allowed to send. Every one is a get: data length 0.
 # Set-capable commands are queried the same way; the payload stays empty.
+# Commands the wall console may set. Values stay inside the ranges below.
+SET_COMMANDS: dict[str, int] = {
+    "power": 0x11,
+    "backlight": 0x58,
+    "picture_brightness": 0x25,
+}
+
 GET_COMMANDS: dict[str, int] = {
     "status": 0x00,
     "serial_number": 0x0B,
@@ -108,6 +119,24 @@ PICTURE_ASPECTS = {
 
 class ProtocolError(Exception):
     """A response could not be decoded."""
+
+
+def build_set_packet(command_name: str, display_id: int, value: int) -> bytes:
+    """Build a one-byte set packet for power or brightness."""
+    command = SET_COMMANDS.get(command_name)
+    if command is None:
+        raise ValueError(f"{command_name} cannot be set")
+    if not 0 <= display_id <= 0xFE:
+        raise ValueError(f"display id {display_id} is outside 0..254")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{command_name} value must be an integer")
+    if command_name == "power":
+        if value not in (0, 1):
+            raise ValueError("power must be 0 or 1")
+    elif not 0 <= value <= 100:
+        raise ValueError(f"{command_name} must be from 0 to 100")
+    body = bytes([command & 0xFF, display_id & 0xFF, 0x01, value & 0xFF])
+    return bytes([HEADER]) + body + bytes([sum(body) & 0xFF])
 
 
 def build_get_packet(command: int, display_id: int) -> bytes:

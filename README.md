@@ -22,7 +22,7 @@ If `display_id` is omitted, the probe tries display ids 0, 1, and the panel numb
 
 ## Wall desk prototype
 
-The browser UI is a preview of display power, brightness, and window layouts. It does not send commands to the wall and does not move Windows.
+The browser UI sends power and brightness to the selected Samsung screens. Window layouts open Edge on the wall computers.
 
 ```bash
 cd web
