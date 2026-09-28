@@ -1,5 +1,6 @@
-# Touch keyboard for a VNC session. Same layout and colors as the console keyboard.
+# Touch keyboard for a VNC session. Grey palette matches the floating keyboard button.
 # Keys are typed into the VNC window, so this panel does not take focus.
+param([switch]$Preview)
 $ErrorActionPreference = "Stop"
 $mutex = New-Object System.Threading.Mutex($false, "WallKeyboardButton")
 try {
@@ -139,10 +140,11 @@ public static class VncKeyboardWin {
 }
 '@ -Language CSharp
 
-$panelBg = [System.Drawing.Color]::FromArgb(3, 16, 46)
-$keyBg = [System.Drawing.Color]::FromArgb(8, 36, 95)
-$keyBorder = [System.Drawing.Color]::FromArgb(72, 150, 170)
-$cyan = [System.Drawing.Color]::FromArgb(125, 211, 252)
+$panelBg = [System.Drawing.Color]::FromArgb(42, 42, 46)
+$keyBg = [System.Drawing.Color]::FromArgb(88, 88, 92)
+$keyBorder = [System.Drawing.Color]::FromArgb(160, 160, 164)
+$keyText = [System.Drawing.Color]::FromArgb(214, 214, 216)
+$dragBg = [System.Drawing.Color]::FromArgb(58, 58, 62)
 $script:shift = $false
 $script:shiftables = @()
 
@@ -167,8 +169,8 @@ function Update-ShiftLabels {
     foreach ($entry in $script:shiftables) {
         $entry.Button.Text = if ($script:shift) { $entry.Upper } else { $entry.Lower }
     }
-    $shiftButton.FlatAppearance.BorderColor = if ($script:shift) { [System.Drawing.Color]::White } else { $keyBorder }
-    $shiftButton.BackColor = if ($script:shift) { [System.Drawing.Color]::FromArgb(16, 78, 168) } else { $keyBg }
+    $shiftButton.FlatAppearance.BorderColor = if ($script:shift) { $keyText } else { $keyBorder }
+    $shiftButton.BackColor = if ($script:shift) { [System.Drawing.Color]::FromArgb(128, 128, 132) } else { $keyBg }
 }
 
 function Send-Char([string]$ch, [bool]$useShift) {
@@ -213,10 +215,10 @@ function New-Key([string]$text, [scriptblock]$onClick, [double]$fontSize) {
     $button.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
     $button.FlatAppearance.BorderSize = 1
     $button.FlatAppearance.BorderColor = $keyBorder
-    $button.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(14, 58, 130)
-    $button.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(20, 78, 160)
+    $button.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(110, 110, 114)
+    $button.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(128, 128, 132)
     $button.BackColor = $keyBg
-    $button.ForeColor = [System.Drawing.Color]::White
+    $button.ForeColor = $keyText
     $button.Font = New-Object System.Drawing.Font "Segoe UI", $fontSize
     $button.TabStop = $false
     $button.Add_MouseUp({
@@ -308,7 +310,7 @@ $script:keyboardPlaced = $false
 $dragBar = New-Object System.Windows.Forms.Panel
 $dragBar.Dock = [System.Windows.Forms.DockStyle]::None
 $dragBar.Height = 36
-$dragBar.BackColor = [System.Drawing.Color]::FromArgb(7, 26, 77)
+$dragBar.BackColor = $dragBg
 $dragBar.Cursor = [System.Windows.Forms.Cursors]::SizeAll
 $keyboard.Controls.Add($dragBar)
 
@@ -316,7 +318,7 @@ $dragLabel = New-Object System.Windows.Forms.Label
 $dragLabel.Dock = [System.Windows.Forms.DockStyle]::Fill
 $dragLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
 $dragLabel.Padding = New-Object System.Windows.Forms.Padding 16, 0, 0, 0
-$dragLabel.ForeColor = $cyan
+$dragLabel.ForeColor = $keyText
 $dragLabel.BackColor = $dragBar.BackColor
 $dragLabel.Font = New-Object System.Drawing.Font "Segoe UI", 12
 $dragLabel.Text = "Drag to move"
@@ -362,14 +364,14 @@ $dragLabel.Add_MouseUp({ Stop-Drag })
 $accent = New-Object System.Windows.Forms.Panel
 $accent.Dock = [System.Windows.Forms.DockStyle]::None
 $accent.Height = 2
-$accent.BackColor = $cyan
+$accent.BackColor = $keyBorder
 $keyboard.Controls.Add($accent)
 
 Add-KeyRow @("1", "2", "3", "4", "5", "6", "7", "8", "9", "0") $false
 Add-KeyRow @("q", "w", "e", "r", "t", "y", "u", "i", "o", "p") $true
 Add-KeyRow @("a", "s", "d", "f", "g", "h", "j", "k", "l") $true
 Add-KeyRow @("z", "x", "c", "v", "b", "n", "m", ".", "-", "_") $true
-Add-KeyRow @("https://", "www.", "/", ":", ".com", "?", "&", "=", "#", "%") $false
+Add-KeyRow @("https://", "www.", "/", ":", ".com", "?", "&", "=", "#", "%") $false -weights 22, 14, 8, 8, 14, 8, 8, 8, 8, 8
 
 $windowsButton = New-Key "" { [VncKeyboardWin]::Tap([uint16]0x5B, $false) } 12
 $windowsButton.Name = "logo"
@@ -382,7 +384,7 @@ $windowsButton.Add_Paint({
     $gap = $side * 0.16
     $originX = ($bounds.Width - ((2 * $pane) + $gap)) / 2
     $originY = ($bounds.Height - ((2 * $pane) + $gap)) / 2
-    $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
+    $brush = New-Object System.Drawing.SolidBrush $keyText
     $eventArgs.Graphics.FillRectangle($brush, $originX, $originY, $pane, $pane)
     $eventArgs.Graphics.FillRectangle($brush, ($originX + $pane + $gap), $originY, $pane, $pane)
     $eventArgs.Graphics.FillRectangle($brush, $originX, ($originY + $pane + $gap), $pane, $pane)
@@ -397,7 +399,7 @@ $hideButton = New-Key "Hide keyboard" { $keyboard.Hide() } 12
 foreach ($action in @($windowsButton, $shiftButton, $spaceButton, $backButton, $enterButton, $hideButton)) {
     $keyboard.Controls.Add($action)
 }
-[void]$script:keyRows.Add([PSCustomObject]@{ Buttons = @($windowsButton, $shiftButton, $spaceButton, $backButton, $enterButton, $hideButton); Weights = @(14, 14, 30, 16, 14, 18) })
+[void]$script:keyRows.Add([PSCustomObject]@{ Buttons = @($windowsButton, $shiftButton, $spaceButton, $backButton, $enterButton, $hideButton); Weights = @(12, 14, 24, 18, 14, 26) })
 
 $script:keyFontSize = -1
 function Update-KeyboardLayout {
@@ -443,84 +445,9 @@ function Update-KeyboardLayout {
     }
     $dragBar.BringToFront()
     $accent.BringToFront()
-    foreach ($control in @($keyboard.Controls)) {
-        if ($control.Tag -in @("nw", "ne", "sw", "se")) { $control.BringToFront() }
-    }
 }
 
-$script:resizing = $false
-$script:resizeCorner = ""
-$script:resizeCursor = $null
-$script:resizeBounds = $null
-function Start-Resize([string]$corner, [System.Windows.Forms.Control]$grip) {
-    $script:resizing = $true
-    $script:resizeCorner = $corner
-    $script:resizeCursor = [System.Windows.Forms.Cursor]::Position
-    $script:resizeBounds = $keyboard.Bounds
-    $grip.Capture = $true
-}
-function Move-Resize {
-    if (-not $script:resizing) { return }
-    $cursor = [System.Windows.Forms.Cursor]::Position
-    $dx = $cursor.X - $script:resizeCursor.X
-    $dy = $cursor.Y - $script:resizeCursor.Y
-    $bounds = $script:resizeBounds
-    $x = $bounds.X
-    $y = $bounds.Y
-    $w = $bounds.Width
-    $h = $bounds.Height
-    switch ($script:resizeCorner) {
-        "se" { $w += $dx; $h += $dy }
-        "sw" { $x += $dx; $w -= $dx; $h += $dy }
-        "ne" { $y += $dy; $w += $dx; $h -= $dy }
-        "nw" { $x += $dx; $y += $dy; $w -= $dx; $h -= $dy }
-    }
-    if ($w -lt 760) {
-        if ($script:resizeCorner -in @("sw", "nw")) { $x -= (760 - $w) }
-        $w = 760
-    }
-    if ($h -lt 300) {
-        if ($script:resizeCorner -in @("ne", "nw")) { $y -= (300 - $h) }
-        $h = 300
-    }
-    $workArea = [System.Windows.Forms.Screen]::FromPoint($cursor).WorkingArea
-    if ($w -gt $workArea.Width) { $w = $workArea.Width }
-    if ($h -gt ($workArea.Height - 24)) { $h = $workArea.Height - 24 }
-    $keyboard.Bounds = New-Object System.Drawing.Rectangle $x, $y, $w, $h
-    Update-KeyboardLayout
-}
-function New-Corner([string]$corner) {
-    $grip = New-Object System.Windows.Forms.Panel
-    $grip.Size = New-Object System.Drawing.Size 36, 36
-    $grip.BackColor = [System.Drawing.Color]::FromArgb(18, 92, 176)
-    $grip.Tag = $corner
-    switch ($corner) {
-        "nw" { $grip.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left; $grip.Location = New-Object System.Drawing.Point 0, 0; $grip.Cursor = [System.Windows.Forms.Cursors]::SizeNWSE }
-        "ne" { $grip.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right; $grip.Location = New-Object System.Drawing.Point ($keyboard.ClientSize.Width - 36), 0; $grip.Cursor = [System.Windows.Forms.Cursors]::SizeNESW }
-        "sw" { $grip.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left; $grip.Location = New-Object System.Drawing.Point 0, ($keyboard.ClientSize.Height - 36); $grip.Cursor = [System.Windows.Forms.Cursors]::SizeNESW }
-        "se" { $grip.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right; $grip.Location = New-Object System.Drawing.Point ($keyboard.ClientSize.Width - 36), ($keyboard.ClientSize.Height - 36); $grip.Cursor = [System.Windows.Forms.Cursors]::SizeNWSE }
-    }
-    $grip.Add_MouseDown({
-        if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Start-Resize $this.Tag $this }
-    })
-    $grip.Add_MouseMove({ Move-Resize })
-    $grip.Add_MouseUp({
-        $script:resizing = $false
-        $this.Capture = $false
-    })
-    $keyboard.Controls.Add($grip)
-    $grip.BringToFront()
-}
-New-Corner "nw"
-New-Corner "ne"
-New-Corner "sw"
-New-Corner "se"
-$keyboard.Add_Resize({
-    Update-KeyboardLayout
-    foreach ($control in @($keyboard.Controls)) {
-        if ($control.Tag -in @("nw", "ne", "sw", "se")) { $control.BringToFront() }
-    }
-})
+$keyboard.Add_Resize({ Update-KeyboardLayout })
 Update-KeyboardLayout
 
 function Show-KeyboardPanel {
@@ -580,10 +507,12 @@ $icon.Add_MouseUp({
     if ($keyboard.Visible) { $keyboard.Hide() } else { Show-KeyboardPanel }
 })
 
+$script:previewMode = [bool]$Preview
 $openedAt = Get-Date
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 1000
 $timer.Add_Tick({
+    if ($script:previewMode) { return }
     if (((Get-Date) - $openedAt).TotalSeconds -lt 8) { return }
     if (-not (Get-Process -Name vncviewer -ErrorAction SilentlyContinue)) {
         $keyboard.Hide()
@@ -591,6 +520,7 @@ $timer.Add_Tick({
     }
 })
 $timer.Start()
+if ($script:previewMode) { Show-KeyboardPanel }
 $buttonForm.Add_FormClosed({ $keyboard.Close() })
 [System.Windows.Forms.Application]::Run($buttonForm)
 $mutex.ReleaseMutex() | Out-Null
