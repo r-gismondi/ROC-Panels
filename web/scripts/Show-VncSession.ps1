@@ -284,7 +284,7 @@ $area = $screen.WorkingArea
 $navy = [System.Drawing.Color]::FromArgb(7, 26, 77)
 $blue = [System.Drawing.Color]::FromArgb(8, 47, 140)
 $cyan = [System.Drawing.Color]::FromArgb(125, 211, 252)
-$barHeight = 56
+$barHeight = 48
 
 $form = New-Object System.Windows.Forms.Form
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
@@ -298,29 +298,29 @@ $form.Text = "VNC session"
 
 $accent = New-Object System.Windows.Forms.Panel
 $accent.Dock = [System.Windows.Forms.DockStyle]::Bottom
-$accent.Height = 3
+$accent.Height = 2
 $accent.BackColor = $cyan
 $form.Controls.Add($accent)
 
 $title = New-Object System.Windows.Forms.Label
 $title.Dock = [System.Windows.Forms.DockStyle]::Fill
 $title.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
-$title.Padding = New-Object System.Windows.Forms.Padding 16, 0, 12, 0
+$title.Padding = New-Object System.Windows.Forms.Padding 12, 0, 8, 0
 $title.BackColor = $navy
 $title.ForeColor = [System.Drawing.Color]::White
-$title.Font = New-Object System.Drawing.Font "Segoe UI", 16
+$title.Font = New-Object System.Drawing.Font "Segoe UI", 13
 $title.Text = "Connecting to $Name…"
 $form.Controls.Add($title)
 
 $close = New-Object System.Windows.Forms.Button
 $close.Dock = [System.Windows.Forms.DockStyle]::Right
-$close.Width = 140
+$close.Width = 96
 $close.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $close.FlatAppearance.BorderSize = 0
 $close.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(16, 78, 168)
 $close.BackColor = $blue
 $close.ForeColor = [System.Drawing.Color]::White
-$close.Font = New-Object System.Drawing.Font "Segoe UI", 16
+$close.Font = New-Object System.Drawing.Font "Segoe UI", 13
 $close.Text = "Close"
 $close.TabStop = $false
 $form.Controls.Add($close)
@@ -377,9 +377,12 @@ $timer.Add_Tick({
             $winH = [Math]::Min($session.Height, $maxH)
         }
         $contentX = $area.X + [int][Math]::Floor([Math]::Max(0, $maxW - $winW) / 2)
-        $contentY = $area.Y + $barHeight + [int][Math]::Floor([Math]::Max(0, $maxH - $winH) / 2)
+        $contentY = $area.Y + $barHeight
         $contentW = $winW
         $contentH = $winH
+        if ($form.Left -ne $contentX -or $form.Top -ne $area.Y -or $form.Width -ne $contentW -or $form.Height -ne $barHeight) {
+            $form.Bounds = New-Object System.Drawing.Rectangle $contentX, $area.Y, $contentW, $barHeight
+        }
 
         if ($session) {
             $script:seenSession = $true
@@ -433,6 +436,8 @@ $timer.Add_Tick({
 
 $form.Add_Shown({
     $timer.Start()
+    $existing = @(Get-VncWindows | Where-Object { $_.Title -like "*$($script:Address)*" -and $_.Title -ne "RealVNC Viewer" })
+    if ($existing.Count -gt 0) { return }
     try { Start-Viewer } catch { $title.Text = $_.Exception.Message }
 })
 
