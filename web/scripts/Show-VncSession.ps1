@@ -294,6 +294,7 @@ $backdrop.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
 $backdrop.BackColor = [System.Drawing.Color]::Black
 $backdrop.Bounds = $area
 $backdrop.Text = "VNC backdrop"
+$backdrop.Add_HandleCreated({ [VncHostWin]::KeepOffTaskbar($backdrop.Handle) })
 $backdrop.Show()
 
 $form = New-Object System.Windows.Forms.Form
@@ -305,6 +306,7 @@ $form.BackColor = $navy
 $form.ForeColor = [System.Drawing.Color]::White
 $form.Bounds = New-Object System.Drawing.Rectangle $area.X, $area.Y, $area.Width, $barHeight
 $form.Text = "VNC session"
+$form.Owner = $backdrop
 
 $accent = New-Object System.Windows.Forms.Panel
 $accent.Dock = [System.Windows.Forms.DockStyle]::Bottom
@@ -421,6 +423,11 @@ $timer.Add_Tick({
             $_.Visible -and $_.Title -ne "RealVNC Viewer" -and $_.Title -notlike "*$($script:Address)*"
         })
         foreach ($dialog in $dialogs) { [VncHostWin]::Raise($dialog.Hwnd) }
+        [VncHostWin]::Raise($form.Handle)
+        foreach ($keyboardTitle in @("Keyboard", "VNC Keyboard")) {
+            $keyboardHwnd = [VncHostWin]::FindTitle($keyboardTitle)
+            if ($keyboardHwnd -ne [IntPtr]::Zero) { [VncHostWin]::Raise($keyboardHwnd) }
+        }
     } catch {
         $title.Text = "Could not open $($script:Name). Close to return."
     }

@@ -296,7 +296,9 @@ $keyboard.Visible = $false
 $keyboard.Add_HandleCreated({ [VncKeyboardWin]::NoActivate($keyboard.Handle) })
 $keyboardWidth = [Math]::Min(1040, $area.Width - 80)
 $keyboardHeight = [Math]::Min(380, $area.Height - 160)
-$keyboard.Bounds = New-Object System.Drawing.Rectangle (($area.Left + [Math]::Floor(($area.Width - $keyboardWidth) / 2)), ($area.Bottom - $keyboardHeight - 16)), $keyboardWidth, $keyboardHeight
+$keyboardX = $area.Left + [Math]::Floor(($area.Width - $keyboardWidth) / 2)
+$keyboardY = $area.Bottom - $keyboardHeight - 16
+$keyboard.Bounds = New-Object System.Drawing.Rectangle $keyboardX, $keyboardY, $keyboardWidth, $keyboardHeight
 $script:keyboardPlaced = $false
 
 $dragBar = New-Object System.Windows.Forms.Panel
