@@ -131,12 +131,21 @@ function normalizeUrl(value: string) {
   return `https://${trimmed}`
 }
 
+function presetById(list: Preset[], id: string, fallbackId: string) {
+  return list.find((item) => item.id === id) ?? list.find((item) => item.id === fallbackId) ?? list[0]
+}
+
+function savedPreset(id: string | undefined, allowed: string[]) {
+  if (!id || id === "close" || !allowed.includes(id)) return ""
+  return id
+}
+
 export function WallConsole() {
   const [selection, setSelection] = useState<Selection>({ panel: 1, screen: "all" })
-  const [preset, setPreset] = useState<Record<PanelId, string>>({ 1: "focus", 2: "focus" })
-  const [applied, setApplied] = useState<Record<PanelId, string>>({ 1: "focus", 2: "focus" })
-  const [computer3Preset, setComputer3Preset] = useState("independent")
-  const [computer3Applied, setComputer3Applied] = useState("independent")
+  const [preset, setPreset] = useState<Record<PanelId, string>>({ 1: "", 2: "" })
+  const [applied, setApplied] = useState<Record<PanelId, string>>({ 1: "", 2: "" })
+  const [computer3Preset, setComputer3Preset] = useState("")
+  const [computer3Applied, setComputer3Applied] = useState("")
   const [power, setPower] = useState<Record<string, boolean>>(initialPower)
   const [brightness, setBrightness] = useState<Record<string, number>>(initialBrightness)
   const [layoutStatus, setLayoutStatus] = useState("Preset buttons preview the layout here. Confirm opens Edge on that computer.")
@@ -205,6 +214,37 @@ export function WallConsole() {
   useEffect(() => {
     let cancel = false
     void (async () => {
+      try {
+        const response = await fetch("/api/layout")
+        const body = (await response.json()) as { layouts?: Record<string, string> }
+        if (cancel || !body.layouts) return
+        const panel1 = savedPreset(body.layouts["101"], PRESETS[1].map((item) => item.id))
+        const panel2 = savedPreset(body.layouts["102"], PRESETS[2].map((item) => item.id))
+        const computer3 = savedPreset(body.layouts["103"], COMPUTER_3_PRESETS.map((item) => item.id))
+        if (panel1) {
+          setPreset((current) => ({ ...current, 1: panel1 }))
+          setApplied((current) => ({ ...current, 1: panel1 }))
+        }
+        if (panel2) {
+          setPreset((current) => ({ ...current, 2: panel2 }))
+          setApplied((current) => ({ ...current, 2: panel2 }))
+        }
+        if (computer3) {
+          setComputer3Preset(computer3)
+          setComputer3Applied(computer3)
+        }
+      } catch {
+        // The buttons stay unselected until a layout command has been saved.
+      }
+    })()
+    return () => {
+      cancel = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancel = false
+    void (async () => {
       const next: Record<string, string> = {}
       for (const computer of ["101", "102", "103"]) {
         try {
@@ -240,8 +280,8 @@ export function WallConsole() {
   const shownBrightness = sameBrightness
     ? brightnessValues[0]
     : Math.round(brightnessValues.reduce((sum, value) => sum + value, 0) / brightnessValues.length)
-  const computer2Preset = PRESETS[2].find((item) => item.id === preset[2]) ?? PRESETS[2][0]
-  const activeComputer3Preset = COMPUTER_3_PRESETS.find((item) => item.id === computer3Preset) ?? COMPUTER_3_PRESETS[0]
+  const computer2Preset = presetById(PRESETS[2], preset[2], "focus")
+  const activeComputer3Preset = presetById(COMPUTER_3_PRESETS, computer3Preset, "independent")
   const current = SCREENS.find((screen) => screen.id === selection.screen)
   const scopeLabel =
     selection.screen === "all"
@@ -386,6 +426,17 @@ export function WallConsole() {
     }
   }
 
+  function forgetLayout(computer: "101" | "102" | "103") {
+    if (computer === "103") {
+      setComputer3Preset("")
+      setComputer3Applied("")
+      return
+    }
+    const panel: PanelId = computer === "101" ? 1 : 2
+    setPreset((currentPreset) => ({ ...currentPreset, [panel]: "" }))
+    setApplied((currentApplied) => ({ ...currentApplied, [panel]: "" }))
+  }
+
   async function closeAllEdge() {
     if (layoutBusy.current) return
     layoutBusy.current = true
@@ -400,9 +451,10 @@ export function WallConsole() {
             body: JSON.stringify({ computer, preset: "close" }),
           })
           const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null
-          return { ok: response.ok, text: body?.message || body?.error || "The layout did not start." }
+          return { computer, ok: response.ok, text: body?.message || body?.error || "The layout did not start." }
         }),
       )
+      results.filter((item) => item.ok).forEach((item) => forgetLayout(item.computer))
       const failed = results.filter((item) => !item.ok)
       setLayoutStatus(failed.length === 0 ? "Closed Edge on every computer." : failed.map((item) => item.text).join(" "))
     } catch {
@@ -452,15 +504,15 @@ export function WallConsole() {
   const addressComputer = current ? COMPUTER_OF[current.id] : null
   const addressPreset =
     addressComputer === "103"
-      ? COMPUTER_3_PRESETS.find((item) => item.id === computer3Applied) ?? COMPUTER_3_PRESETS[0]
+      ? presetById(COMPUTER_3_PRESETS, computer3Applied, "independent")
       : addressComputer === "101"
-        ? PRESETS[1].find((item) => item.id === applied[1]) ?? PRESETS[1][0]
-        : PRESETS[2].find((item) => item.id === applied[2]) ?? PRESETS[2][0]
+        ? presetById(PRESETS[1], applied[1], "focus")
+        : presetById(PRESETS[2], applied[2], "focus")
   const addressIds = addressComputer === "103" ? COMPUTER_3_IDS : addressComputer === "101" ? IDS[1] : COMPUTER_2_IDS
   const zoneIds = current ? addressIds.filter((id) => addressPreset.groups[id] === addressPreset.groups[current.id]) : []
   const shownZone = zoneIds.length > 0 ? zoneIds : current ? [current.id] : []
   const addressValue = current ? addresses[current.id] ?? DEFAULT_URL : DEFAULT_URL
-  const previewPending = footer.activeId !== footer.appliedId
+  const previewPending = footer.activeId !== "" && footer.activeId !== footer.appliedId
 
   function insertAddress(token: string) {
     if (!current) return
@@ -571,7 +623,7 @@ export function WallConsole() {
           title="Panel 1"
           detail="192.168.0.101"
           rows={PANEL_1}
-          preset={PRESETS[1].find((item) => item.id === preset[1])!}
+          preset={presetById(PRESETS[1], preset[1], "focus")}
           selection={selection}
           power={power}
           thumbStamp={thumbStamp}
@@ -701,7 +753,7 @@ export function WallConsole() {
           label={footer.label}
           presets={footer.presets}
           activeId={footer.activeId}
-          pending={footer.activeId !== footer.appliedId}
+          pending={previewPending}
           onSelect={(id) => {
             const name = footer.presets.find((item) => item.id === id)?.name ?? id
             if (footer.computer === "103") setComputer3Preset(id)
@@ -729,7 +781,10 @@ export function WallConsole() {
             setLayoutStatus(`Canceled the preview on ${footer.target}.`)
           }}
           onClose={() => {
-            void runLayout(footer.computer, "close")
+            void (async () => {
+              const ok = await runLayout(footer.computer, "close")
+              if (ok) forgetLayout(footer.computer)
+            })()
           }}
           onCloseAll={() => {
             void closeAllEdge()
@@ -987,7 +1042,7 @@ function PresetRow({
       </div>
       <div className={`grid grid-cols-2 gap-2 ${presets.length > 2 ? "sm:grid-cols-5" : "sm:grid-cols-2 sm:max-w-md"}`}>
         {presets.map((item) => (
-          <GlowButton key={item.id} active={item.id === activeId} onClick={() => onSelect(item.id)}>
+          <GlowButton key={item.id} active={activeId !== "" && item.id === activeId} onClick={() => onSelect(item.id)}>
             {item.name}
           </GlowButton>
         ))}

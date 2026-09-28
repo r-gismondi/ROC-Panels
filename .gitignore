@@ -1,4 +1,5 @@
 dist/
+layout-state/
 packaging/cache/
 __pycache__/
 *.py[cod]

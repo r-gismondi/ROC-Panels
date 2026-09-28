@@ -224,6 +224,33 @@ export function layoutAccount() {
   return { user: user || "Administrator", password }
 }
 
+function layoutStateFile(computer: string) {
+  return path.join(installRoot(), "layout-state", `${computer}.txt`)
+}
+
+function rememberLayout(computer: string, preset: string) {
+  const allowed = ALLOWED[computer]
+  if (!allowed?.includes(preset)) return
+  const file = layoutStateFile(computer)
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const temporary = `${file}.${process.pid}.tmp`
+  fs.writeFileSync(temporary, preset, "ascii")
+  fs.renameSync(temporary, file)
+}
+
+export function readLayoutState() {
+  const layouts: Record<string, string> = { "101": "", "102": "", "103": "" }
+  for (const computer of Object.keys(layouts)) {
+    try {
+      const text = fs.readFileSync(layoutStateFile(computer), "utf8").trim()
+      if (ALLOWED[computer]?.includes(text)) layouts[computer] = text
+    } catch {
+      // This computer has not accepted a layout command yet.
+    }
+  }
+  return layouts
+}
+
 export async function launchLayout(computer: string, preset: string): Promise<LaunchResult> {
   const command = layoutCommand(computer, preset)
   if (!command) return { ok: false, message: "That preset is not on this computer." }
@@ -243,6 +270,7 @@ export async function launchLayout(computer: string, preset: string): Promise<La
     if (known) void watcherFresh(command.host).catch(() => watcherReadyUntil.delete(command.host))
     else await ensureWatcher(command.host, user, password)
     queueLaunch(command.host, command.path)
+    rememberLayout(computer, preset)
     const message = command.label === "Close" ? `Closed Edge on ${command.host}.` : `Opened ${command.label} on ${command.host}.`
     return { ok: true, message }
   } catch (error) {
