@@ -6,7 +6,7 @@ export const runtime = "nodejs"
 export async function GET(request: Request) {
   const computer = new URL(request.url).searchParams.get("computer") ?? ""
   if (computer !== "101" && computer !== "102" && computer !== "103") {
-    return NextResponse.json({ error: "Pick a computer." }, { status: 400 })
+    return NextResponse.json({ error: "Pick a screen group." }, { status: 400 })
   }
   return NextResponse.json({ addresses: readAddresses(computer) })
 }

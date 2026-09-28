@@ -408,7 +408,7 @@ foreach ($zone in $presets[$Preset]) {
     }
     [void][PanelWin]::Place($hwnd, $zone.X, $zone.Y, $drawW, $drawH)
     Add-Content -Path $hwndFile -Value $hwnd.ToInt64() -Encoding Ascii
-    $opened += [pscustomobject]@{ Title = $zone.Title; Hwnd = $hwnd; X = $zone.X; Y = $zone.Y; W = $drawW; H = $drawH }
+    $opened += [pscustomobject]@{ Title = $zone.Title; Hwnd = $hwnd; X = $zone.X; Y = $zone.Y; W = $drawW; H = $drawH; Kind = "edge" }
     Write-Output "Placed $($zone.Title)"
     Start-Sleep -Milliseconds 150
 }
@@ -465,6 +465,17 @@ function Test-HostHome($item) {
     $dh = [Math]::Abs([int]$parts[3] - $item.H)
     return ($dx -le 8) -and ($dy -le 8) -and ($dw -le 8) -and ($dh -le 8)
 }
+function Test-AppHome($item) {
+    $text = [PanelWin]::RectOf($item.Hwnd)
+    if ($text -eq "unread") { return $false }
+    $parts = @($text -split '[ ,x]')
+    if ($parts.Count -lt 4) { return $false }
+    $dx = [Math]::Abs([int]$parts[0] - $item.X)
+    $dy = [Math]::Abs([int]$parts[1] - $item.Y)
+    $dw = [Math]::Abs([int]$parts[2] - $item.W)
+    $dh = [Math]::Abs([int]$parts[3] - $item.H)
+    return ($dx -le 8) -and ($dy -le 8) -and ($dw -le 8) -and ($dh -le 8)
+}
 function Test-LayoutDesktop {
     foreach ($item in $opened) {
         if (-not [PanelDesktop]::Covers($item.X, $item.Y, $item.W, $item.H)) { return $false }
@@ -479,15 +490,25 @@ $timer.Add_Tick({
     # While a monitor is off, Windows parks its windows on a screen that is still on.
     # Leave them there until every tile is on a connected display again, then put them back.
     $ready = Test-LayoutDesktop
+    foreach ($item in $opened) {
+        if ($item.Kind -ne "app") { continue }
+        if (-not [PanelWin]::IsWindow($item.Hwnd)) { continue }
+        [void][PanelWin]::ShowWindow($item.Host, 0)
+        if ($script:fitPasses -le 3 -or $ready) {
+            if (-not (Test-AppHome $item)) { [void][PanelWin]::Place($item.Hwnd, $item.X, $item.Y, $item.W, $item.H) }
+        }
+    }
     $needsRestore = $false
     if ($script:fitPasses -gt 3) {
         if (-not $ready) { return }
         foreach ($item in $opened) {
+            if ($item.Kind -eq "app") { continue }
             if (-not (Test-HostHome $item)) { $needsRestore = $true; break }
         }
         if (-not $needsRestore) { return }
     }
     foreach ($item in $opened) {
+        if ($item.Kind -eq "app") { continue }
         if (-not [PanelWin]::IsWindow($item.Hwnd)) { continue }
         if ($needsRestore) { [void][PanelWin]::ShowWindow($item.Host, 9) }
         [void][PanelWin]::Fit($item.Hwnd, $item.Host, $item.X, $item.Y, $item.W, $item.H)
@@ -518,7 +539,7 @@ $urlTimer.Add_Tick({
             $validScreen = $screen -match '^TV([1-9]|1[0-8])$'
             $validUrl = ($url.StartsWith("http://") -or $url.StartsWith("https://")) -and $url.Length -le 2000 -and $url -notmatch '[\s''"<>\\]'
             if (-not $validScreen) {
-                [System.IO.File]::WriteAllText($resultPath, "error That screen is not on this computer.", $utf8)
+                [System.IO.File]::WriteAllText($resultPath, "error That screen is not in this layout.", $utf8)
                 return
             }
             if (-not $validUrl) {
@@ -561,6 +582,8 @@ $urlTimer.Add_Tick({
                 [System.IO.File]::WriteAllText($resultPath, "error Edge did not open that address.", $utf8)
                 return
             }
+            $match.Kind = "edge"
+            [void][PanelWin]::ShowWindow($match.Host, 9)
             [void][PanelWin]::Place($hwnd, $match.X, $match.Y, $match.W, $match.H)
             [void][PanelWin]::Fit($hwnd, $match.Host, $match.X, $match.Y, $match.W, $match.H)
             [void][PanelWin]::CloseWindow($match.Hwnd)
@@ -588,6 +611,129 @@ $urlTimer.Add_Tick({
     } catch {}
 })
 $urlTimer.Start()
+function Get-ProcessTree([int]$Root) {
+    $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $ids = @{}
+    $ids[$Root] = $true
+    $changed = $true
+    while ($changed) {
+        $changed = $false
+        foreach ($proc in $all) {
+            $procId = [int]$proc.ProcessId
+            $parent = [int]$proc.ParentProcessId
+            if ($ids.ContainsKey($parent) -and -not $ids.ContainsKey($procId)) {
+                $ids[$procId] = $true
+                $changed = $true
+            }
+        }
+    }
+    return $ids
+}
+function Wait-AppWindow($Started) {
+    $seen = @{}
+    foreach ($existing in @([PanelWin]::VisibleWindows())) { $seen[$existing.ToInt64()] = $true }
+    $deadline = (Get-Date).AddSeconds(25)
+    $fallbackAfter = (Get-Date).AddSeconds(3)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 300
+        $tree = Get-ProcessTree $Started.Id
+        try { $Started.Refresh() } catch {}
+        $owned = [IntPtr]::Zero
+        foreach ($candidate in @([PanelWin]::VisibleWindows())) {
+            $procId = [int][PanelWin]::PidOf($candidate)
+            if (-not $tree.ContainsKey($procId)) { continue }
+            if (-not [PanelWin]::TextOf($candidate)) { continue }
+            if (-not $seen.ContainsKey($candidate.ToInt64())) { return $candidate }
+            if ($owned -eq [IntPtr]::Zero) { $owned = $candidate }
+        }
+        if ($Started.MainWindowHandle -ne [IntPtr]::Zero) {
+            $handle = $Started.MainWindowHandle
+            if (-not $seen.ContainsKey($handle.ToInt64())) { return $handle }
+            if ((Get-Date) -gt $fallbackAfter) { return $handle }
+        }
+        if ((Get-Date) -gt $fallbackAfter -and $owned -ne [IntPtr]::Zero) { return $owned }
+    }
+    return [IntPtr]::Zero
+}
+function Save-ZoneHwnds {
+    $ids = foreach ($item in $opened) { $item.Hwnd.ToInt64().ToString() }
+    Set-Content -LiteralPath $hwndFile -Value $ids -Encoding Ascii
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $root "app-requests") | Out-Null
+$appTimer = New-Object System.Windows.Forms.Timer
+$appTimer.Interval = 200
+$appTimer.Add_Tick({
+    if ($script:urlBusy) { return }
+    try {
+        $dir = Join-Path $root "app-requests"
+        $pending = @(Get-ChildItem -LiteralPath $dir -Filter *.txt -ErrorAction SilentlyContinue | Sort-Object Name)
+        if ($pending.Count -eq 0) { return }
+        $request = $pending[0]
+        $screen = [System.IO.Path]::GetFileNameWithoutExtension($request.Name)
+        $resultDir = Join-Path $root "app-results"
+        New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+        $resultPath = Join-Path $resultDir ($screen + ".txt")
+        $exe = ""
+        try { $exe = ([System.IO.File]::ReadAllText($request.FullName)).Trim() } catch { return }
+        Remove-Item -LiteralPath $request.FullName -Force -ErrorAction SilentlyContinue
+        $script:urlBusy = $true
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        try {
+            $validScreen = $screen -match '^TV([1-9]|1[0-8])$'
+            $validExe = $exe -match '^[A-Za-z]:\\[^<>:"|?*\r\n]+\.exe$' -and (Test-Path -LiteralPath $exe)
+            if (-not $validScreen) {
+                [System.IO.File]::WriteAllText($resultPath, "error That screen is not in this layout.", $utf8)
+                return
+            }
+            if (-not $validExe) {
+                [System.IO.File]::WriteAllText($resultPath, "error That program was not found.", $utf8)
+                return
+            }
+            $match = $null
+            foreach ($item in $opened) {
+                $names = @($item.Title -split '\s+')
+                if ($item.Title -eq "All" -or ($names -contains $screen)) {
+                    $match = $item
+                    break
+                }
+            }
+            if (-not $match) {
+                [System.IO.File]::WriteAllText($resultPath, "error That screen is not open in this layout.", $utf8)
+                return
+            }
+            [System.IO.File]::WriteAllText($resultPath, "working", $utf8)
+            $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $startInfo.FileName = $exe
+            $startInfo.WorkingDirectory = Split-Path -Parent $exe
+            $startInfo.UseShellExecute = $true
+            $started = New-Object System.Diagnostics.Process
+            $started.StartInfo = $startInfo
+            [void]$started.Start()
+            $hwnd = Wait-AppWindow $started
+            if ($hwnd -eq [IntPtr]::Zero) {
+                [System.IO.File]::WriteAllText($resultPath, "error The program did not open a window.", $utf8)
+                return
+            }
+            [void][PanelWin]::ShowWindow($match.Host, 0)
+            [void][PanelWin]::Place($hwnd, $match.X, $match.Y, $match.W, $match.H)
+            [void][PanelWin]::CloseWindow($match.Hwnd)
+            [void]$known.Remove($match.Hwnd.ToInt64())
+            $match.Hwnd = $hwnd
+            $match.Kind = "app"
+            $known[$hwnd.ToInt64()] = $true
+            Save-ZoneHwnds
+            [System.IO.File]::WriteAllText($resultPath, "ok", $utf8)
+        } catch {
+            $reason = $_.Exception.Message
+            if (-not $reason) { $reason = "The program did not open." }
+            $reason = ($reason -replace '[\r\n]+', ' ')
+            [System.IO.File]::WriteAllText($resultPath, "error $reason", $utf8)
+        } finally {
+            $script:urlBusy = $false
+        }
+    } catch {}
+})
+$appTimer.Start()
 Write-Output "Opened $($opened.Count) pages. Leave this window open. Edge-Close.bat closes them."
 [System.Windows.Forms.Application]::Run()
 exit 0

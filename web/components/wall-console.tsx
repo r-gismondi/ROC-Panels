@@ -9,6 +9,14 @@ type Screen = { id: string; hdmi: string }
 
 type Preset = { id: string; name: string; groups: Record<string, number> }
 
+type PinnedApp = { id: string; name: string; path: string }
+
+const GROUP_LABEL = {
+  "101": "screens 1–8",
+  "102": "screens 9–12 and 14–17",
+  "103": "screens 13 and 18",
+} as const
+
 type Selection = { panel: PanelId; screen: string | "all" }
 
 const GROUP_COLOR = ["#3ec8ff", "#d56bff", "#7eb6ff", "#5eead4", "#f0c27a"]
@@ -148,7 +156,10 @@ export function WallConsole() {
   const [computer3Applied, setComputer3Applied] = useState("")
   const [power, setPower] = useState<Record<string, boolean>>(initialPower)
   const [brightness, setBrightness] = useState<Record<string, number>>(initialBrightness)
-  const [layoutStatus, setLayoutStatus] = useState("Preset buttons preview the layout here. Confirm opens Edge on that computer.")
+  const [layoutStatus, setLayoutStatus] = useState("Preset buttons preview the layout here. Confirm opens Edge on these screens.")
+  const [pins, setPins] = useState<PinnedApp[]>([])
+  const [armedApp, setArmedApp] = useState("")
+  const [browseBusy, setBrowseBusy] = useState(false)
   const [addresses, setAddresses] = useState<Record<string, string>>({})
   const [keyboardOpen, setKeyboardOpen] = useState(false)
   const [replaceAddress, setReplaceAddress] = useState(false)
@@ -262,6 +273,22 @@ export function WallConsole() {
     }
   }, [])
 
+  useEffect(() => {
+    let cancel = false
+    void (async () => {
+      try {
+        const response = await fetch("/api/apps")
+        const body = (await response.json()) as { pins?: PinnedApp[] }
+        if (!cancel && body.pins) setPins(body.pins)
+      } catch {
+        // The shelf stays empty until a program is added.
+      }
+    })()
+    return () => {
+      cancel = true
+    }
+  }, [])
+
   const panel = selection.panel
   const computer3Scope = selection.panel === 2 && (selection.screen === "computer-3" || COMPUTER_3_IDS.includes(selection.screen))
   const computer2Scope = selection.panel === 2 && (selection.screen === "computer-2" || COMPUTER_2_IDS.includes(selection.screen))
@@ -284,29 +311,21 @@ export function WallConsole() {
   const activeComputer3Preset = presetById(COMPUTER_3_PRESETS, computer3Preset, "independent")
   const current = SCREENS.find((screen) => screen.id === selection.screen)
   const scopeLabel =
-    selection.screen === "all"
-      ? "WHOLE PANEL"
-      : selection.screen === "computer-2"
-        ? "COMPUTER 2"
-        : selection.screen === "computer-3"
-          ? "COMPUTER 3"
-          : "ONE SCREEN"
+    selection.screen === "all" ? "WHOLE PANEL" : selection.screen === "computer-2" || selection.screen === "computer-3" ? "SCREENS" : "ONE SCREEN"
   const scopeTitle =
     selection.screen === "all"
       ? `Panel ${panel}`
       : selection.screen === "computer-2"
-        ? "Computer 2"
+        ? "Screens 9–12 and 14–17"
         : selection.screen === "computer-3"
-          ? "Computer 3"
+          ? "Screens 13 and 18"
           : current?.id
   const scopeDetail =
     selection.screen === "all"
       ? `All ${targets.length} screens. Tap one screen to adjust it alone.`
-      : selection.screen === "computer-2"
-        ? "Screens 9–12 and 14–17 on 192.168.0.102. Tap the panel edge to adjust every screen on panel 2."
-        : selection.screen === "computer-3"
-          ? "Screens 13 and 18 on 192.168.0.103. Tap the panel edge to adjust every screen on panel 2."
-          : `${current?.hdmi}. Tap the panel around the screens to adjust all of them.`
+      : selection.screen === "computer-2" || selection.screen === "computer-3"
+        ? "Tap the panel edge to adjust every screen on panel 2."
+        : `${current?.hdmi}. Tap the panel around the screens to adjust all of them.`
 
   async function applyPower(on: boolean) {
     const screens = [...targets]
@@ -393,17 +412,17 @@ export function WallConsole() {
 
   const footer =
     panel === 1
-      ? { label: "PANEL 1 PRESETS", presets: PRESETS[1], activeId: preset[1], appliedId: applied[1], computer: "101" as const, target: "Panel 1" }
+      ? { label: "PANEL 1 PRESETS", presets: PRESETS[1], activeId: preset[1], appliedId: applied[1], computer: "101" as const, target: GROUP_LABEL["101"] }
       : computer3Scope
         ? {
-            label: "COMPUTER 3 PRESETS",
+            label: "SCREENS 13 AND 18",
             presets: COMPUTER_3_PRESETS,
             activeId: computer3Preset,
             appliedId: computer3Applied,
             computer: "103" as const,
-            target: "Computer 3",
+            target: GROUP_LABEL["103"],
           }
-        : { label: "COMPUTER 2 PRESETS", presets: PRESETS[2], activeId: preset[2], appliedId: applied[2], computer: "102" as const, target: "Computer 2" }
+        : { label: "SCREENS 9–12, 14–17", presets: PRESETS[2], activeId: preset[2], appliedId: applied[2], computer: "102" as const, target: GROUP_LABEL["102"] }
 
   async function runLayout(computer: "101" | "102" | "103", id: string) {
     if (layoutBusy.current) return false
@@ -440,7 +459,7 @@ export function WallConsole() {
   async function closeAllEdge() {
     if (layoutBusy.current) return
     layoutBusy.current = true
-    setLayoutStatus("Closing Edge on every computer…")
+    setLayoutStatus("Closing Edge on every screen…")
     const computers = ["101", "102", "103"] as const
     try {
       const results = await Promise.all(
@@ -456,7 +475,7 @@ export function WallConsole() {
       )
       results.filter((item) => item.ok).forEach((item) => forgetLayout(item.computer))
       const failed = results.filter((item) => !item.ok)
-      setLayoutStatus(failed.length === 0 ? "Closed Edge on every computer." : failed.map((item) => item.text).join(" "))
+      setLayoutStatus(failed.length === 0 ? "Closed Edge on every screen." : failed.map((item) => item.text).join(" "))
     } catch {
       setLayoutStatus("Could not reach the layout service.")
     } finally {
@@ -481,13 +500,13 @@ export function WallConsole() {
   }
 
   function openRemote(screenId: string) {
+    if (armedApp) return
     const computer = COMPUTER_OF[screenId]
     if (computer) void runVnc(computer)
   }
 
   async function runVnc(computer: "101" | "102" | "103") {
-    const name = computer === "101" ? "Computer 1" : computer === "102" ? "Computer 2" : "Computer 3"
-    setLayoutStatus(`Opening VNC to ${name}…`)
+    setLayoutStatus(`Opening the remote desktop for ${GROUP_LABEL[computer]}…`)
     try {
       const response = await fetch("/api/vnc", {
         method: "POST",
@@ -587,6 +606,94 @@ export function WallConsole() {
     }
   }
 
+  function choose(next: Selection) {
+    setSelection(next)
+    if (/^TV\d+$/.test(next.screen)) void openArmedProgram(next.screen)
+  }
+
+  async function openArmedProgram(screenId: string) {
+    const pin = pins.find((item) => item.id === armedApp)
+    if (!pin) return
+    const computer = COMPUTER_OF[screenId]
+    if (!computer || layoutBusy.current) return
+    const appliedId = computer === "101" ? applied[1] : computer === "102" ? applied[2] : computer3Applied
+    const selectedId = computer === "101" ? preset[1] : computer === "102" ? preset[2] : computer3Preset
+    if (!appliedId) {
+      setLayoutStatus("Confirm a layout, then open the program. Independent puts it on one screen.")
+      return
+    }
+    if (selectedId !== "" && selectedId !== appliedId) {
+      setLayoutStatus("Confirm the layout preview, then open the program.")
+      return
+    }
+    const list = computer === "103" ? COMPUTER_3_PRESETS : computer === "101" ? PRESETS[1] : PRESETS[2]
+    const active = list.find((item) => item.id === appliedId)
+    const ids = computer === "103" ? COMPUTER_3_IDS : computer === "101" ? IDS[1] : COMPUTER_2_IDS
+    const group = active?.groups[screenId]
+    const zone = active ? ids.filter((id) => active.groups[id] === group) : [screenId]
+    const label = zone.length > 1 ? `screens ${zone.map(screenNumber).join(", ")}` : `screen ${screenNumber(screenId)}`
+    layoutBusy.current = true
+    setLayoutStatus(`Opening ${pin.name} on ${label}…`)
+    try {
+      const response = await fetch("/api/apps", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "launch", id: pin.id, screen: screenId }),
+      })
+      const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null
+      if (!response.ok) {
+        setLayoutStatus(body?.error || "The program did not open.")
+        return
+      }
+      setLayoutStatus(`Opened ${pin.name} on ${label}.`)
+      setArmedApp("")
+    } catch {
+      setLayoutStatus("Could not reach the layout service.")
+    } finally {
+      layoutBusy.current = false
+    }
+  }
+
+  async function browseProgram() {
+    if (browseBusy) return
+    setBrowseBusy(true)
+    setLayoutStatus("Choose a program.")
+    try {
+      const response = await fetch("/api/apps", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "browse" }),
+      })
+      const body = (await response.json().catch(() => null)) as { pins?: PinnedApp[]; selectedId?: string; canceled?: boolean; error?: string } | null
+      if (!response.ok || !body?.pins) {
+        setLayoutStatus(body?.error || "The program list could not be opened.")
+        return
+      }
+      setPins(body.pins)
+      if (body.selectedId) setArmedApp(body.selectedId)
+      setLayoutStatus(body.canceled ? "No program was added." : "Tap a screen. The program replaces that layout group.")
+    } catch {
+      setLayoutStatus("Could not reach the layout service.")
+    } finally {
+      setBrowseBusy(false)
+    }
+  }
+
+  async function removeProgram(id: string) {
+    if (armedApp === id) setArmedApp("")
+    try {
+      const response = await fetch("/api/apps", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "remove", id }),
+      })
+      const body = (await response.json().catch(() => null)) as { pins?: PinnedApp[] } | null
+      if (body?.pins) setPins(body.pins)
+    } catch {
+      setLayoutStatus("Could not reach the layout service.")
+    }
+  }
+
   return (
     <main className="flex min-h-svh flex-col bg-[radial-gradient(circle_at_top,#1650c8_0%,#06215f_42%,#03102e_100%)] text-white">
       <header className="flex items-center justify-between gap-4 border-b border-cyan-300/30 px-4 py-3 sm:px-6">
@@ -621,13 +728,13 @@ export function WallConsole() {
         <PanelFrame
           panel={1}
           title="Panel 1"
-          detail="192.168.0.101"
+          detail="Screens 1–8"
           rows={PANEL_1}
           preset={presetById(PRESETS[1], preset[1], "focus")}
           selection={selection}
           power={power}
           thumbStamp={thumbStamp}
-          onSelect={setSelection}
+          onSelect={choose}
           onOpenRemote={openRemote}
           height={controlHeight}
         />
@@ -718,8 +825,6 @@ export function WallConsole() {
           <div className="grid min-h-0 flex-1 items-stretch gap-2 lg:grid-cols-5">
             <ComputerFrame
               className="lg:col-span-4"
-              title="Computer 2"
-              detail="192.168.0.102"
               rows={COMPUTER_2}
               preset={computer2Preset}
               selected={computer2Scope}
@@ -727,13 +832,11 @@ export function WallConsole() {
               power={power}
               thumbStamp={thumbStamp}
               onSelectFrame={() => setSelection({ panel: 2, screen: "computer-2" })}
-              onSelectScreen={(screen) => setSelection({ panel: 2, screen })}
+              onSelectScreen={(screen) => choose({ panel: 2, screen })}
               onOpenRemote={openRemote}
             />
             <ComputerFrame
               className="lg:col-span-1"
-              title="Computer 3"
-              detail="192.168.0.103"
               rows={COMPUTER_3}
               preset={activeComputer3Preset}
               selected={computer3Scope}
@@ -741,7 +844,7 @@ export function WallConsole() {
               power={power}
               thumbStamp={thumbStamp}
               onSelectFrame={() => setSelection({ panel: 2, screen: "computer-3" })}
-              onSelectScreen={(screen) => setSelection({ panel: 2, screen })}
+              onSelectScreen={(screen) => choose({ panel: 2, screen })}
               onOpenRemote={openRemote}
             />
           </div>
@@ -791,6 +894,46 @@ export function WallConsole() {
           }}
         />
       </footer>
+      <section className="border-t border-cyan-300/30 px-4 py-3 sm:px-6">
+        <div className="mb-2">
+          <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">PROGRAMS</p>
+          <p className="text-xs text-cyan-100/80">
+            {armedApp
+              ? "Tap a screen. The program replaces that layout group. Use Independent for one screen."
+              : "Browse for a program, then tap a screen."}
+          </p>
+        </div>
+        <div className="flex items-stretch gap-2 overflow-x-auto pb-1">
+          <GlowButton active={browseBusy} onClick={() => void browseProgram()}>
+            {browseBusy ? "Opening…" : "Browse"}
+          </GlowButton>
+          {pins.map((pin) => (
+            <div key={pin.id} className="flex shrink-0">
+              <button
+                type="button"
+                onClick={() => setArmedApp((currentId) => (currentId === pin.id ? "" : pin.id))}
+                className={`min-h-11 max-w-48 truncate rounded-l-lg border border-r-0 px-3 text-sm tracking-wide ${
+                  armedApp === pin.id
+                    ? "border-cyan-200 bg-cyan-400/25 shadow-[0_0_16px_rgba(80,200,255,0.35)]"
+                    : "border-cyan-300/35 bg-[#08245f]/80"
+                }`}
+              >
+                {pin.name}
+              </button>
+              <button
+                type="button"
+                aria-label={`Remove ${pin.name}`}
+                onClick={() => void removeProgram(pin.id)}
+                className={`min-h-11 rounded-r-lg border px-3 text-sm ${
+                  armedApp === pin.id ? "border-cyan-200 bg-cyan-400/25" : "border-cyan-300/35 bg-[#08245f]/80"
+                }`}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      </section>
       {keyboardOpen && current ? (
         <AddressKeyboard
           label={`Screen ${screenNumber(current.id)}`}
@@ -855,13 +998,6 @@ function PanelFrame({
         <span className="text-[11px] tracking-[0.14em] text-cyan-100/80">{allOn ? "ON" : allOff ? "OFF" : "MIXED"}</span>
       </div>
       <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-transparent p-2">
-        {/* Reserves the same space as the computer label on panel 2, so every screen is the same height. */}
-        <p className="invisible truncate text-[11px] font-semibold tracking-[0.08em] whitespace-nowrap uppercase" aria-hidden="true">
-          Computer
-        </p>
-        <p className="invisible mb-2 truncate text-[10px] whitespace-nowrap" aria-hidden="true">
-          192.168.0.101
-        </p>
         <div className="flex min-h-0 flex-1 flex-col gap-2">
         {rows.map((row) => (
           <div key={row[0].id} className="grid min-h-0 flex-1 gap-2" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>
@@ -887,8 +1023,6 @@ function PanelFrame({
 
 function ComputerFrame({
   className = "",
-  title,
-  detail,
   rows,
   preset,
   selected,
@@ -900,8 +1034,6 @@ function ComputerFrame({
   onOpenRemote,
 }: {
   className?: string
-  title: string
-  detail: string
   rows: Screen[][]
   preset: Preset
   selected: boolean
@@ -920,8 +1052,6 @@ function ComputerFrame({
       }}
       className={`flex h-full min-h-0 min-w-0 flex-col rounded-xl border p-2 ${className} ${selected ? "border-white bg-white/5" : "border-cyan-300/35"}`}
     >
-      <p className="truncate text-[11px] font-semibold tracking-[0.08em] whitespace-nowrap uppercase">{title}</p>
-      <p className="mb-2 truncate text-[10px] whitespace-nowrap text-cyan-100/70">{detail}</p>
       <div className="flex min-h-0 flex-1 flex-col gap-2">
         {rows.map((row) => (
           <div key={row[0].id} className="grid min-h-0 flex-1 gap-2" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>

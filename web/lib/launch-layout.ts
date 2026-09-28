@@ -14,6 +14,12 @@ const HOSTS: Record<string, string> = {
   "103": "192.168.0.103",
 }
 
+const SCREEN_RANGES: Record<string, string> = {
+  "101": "screens 1–8",
+  "102": "screens 9–12 and 14–17",
+  "103": "screens 13 and 18",
+}
+
 const BATS: Record<string, string> = {
   independent: "Edge-Independent.bat",
   split: "Edge-Split.bat",
@@ -284,11 +290,11 @@ export function readLayoutState() {
 
 export async function launchLayout(computer: string, preset: string): Promise<LaunchResult> {
   const command = layoutCommand(computer, preset)
-  if (!command) return { ok: false, message: "That preset is not on this computer." }
+    if (!command) return { ok: false, message: "That preset is not on these screens." }
   if (process.platform !== "win32") {
     return {
       ok: false,
-      message: "Run this page on a Windows computer on the wall network. Preset buttons launch the Edge layouts from there.",
+      message: "Run this page on the touchscreen. Preset buttons launch the Edge layouts from there.",
     }
   }
   const account = layoutAccount()
@@ -302,7 +308,7 @@ export async function launchLayout(computer: string, preset: string): Promise<La
     else await ensureWatcher(command.host, user, password)
     if (preset !== "close") {
       const close = layoutCommand(computer, "close")
-      if (!close) return { ok: false, message: "That preset is not on this computer." }
+      if (!close) return { ok: false, message: "That preset is not on these screens." }
       const ticket = queueLaunch(command.host, close.path)
       const closed = await waitUntilGone(ticket, 20000)
       if (!closed) return { ok: false, message: `Edge on ${command.host} did not close.` }
@@ -310,7 +316,8 @@ export async function launchLayout(computer: string, preset: string): Promise<La
     }
     queueLaunch(command.host, command.path)
     rememberLayout(computer, preset)
-    const message = command.label === "Close" ? `Closed Edge on ${command.host}.` : `Opened ${command.label} on ${command.host}.`
+    const where = SCREEN_RANGES[computer] ?? "these screens"
+    const message = command.label === "Close" ? `Closed Edge on ${where}.` : `Opened ${command.label} on ${where}.`
     return { ok: true, message }
   } catch (error) {
     const failed = error as { code?: string; stdout?: string; stderr?: string; message?: string }
@@ -355,10 +362,10 @@ export async function setLayoutAddress(computer: string, screen: string, url: st
   const host = HOSTS[computer]
   const screens = ADDRESS_SCREENS[computer]
   if (!host || !screens || !screens.includes(screen) || !validAddress(url)) {
-    return { ok: false, message: "Use an http or https address on a screen of that computer." }
+    return { ok: false, message: "Use an http or https address on that screen." }
   }
   if (process.platform !== "win32") {
-    return { ok: false, message: "Run this page on a Windows computer on the wall network." }
+    return { ok: false, message: "Run this page on the touchscreen." }
   }
   const root = path.join(layoutsRoot(host), `computer-${computer}`)
   const requests = path.join(root, "url-requests")
@@ -386,7 +393,7 @@ export async function setLayoutAddress(computer: string, screen: string, url: st
     }
     if (!text) {
       if (!sawWorking && Date.now() - started > 2500) {
-        return { ok: false, message: `Confirm a layout on ${host}, then set the address.` }
+        return { ok: false, message: "Confirm a layout, then set the address." }
       }
       continue
     }
@@ -396,7 +403,7 @@ export async function setLayoutAddress(computer: string, screen: string, url: st
     }
     if (text === "ok") {
       const number = screen.replace("TV", "")
-      return { ok: true, message: `Screen ${number} on ${host} now shows ${url}.` }
+      return { ok: true, message: `Screen ${number} now shows ${url}.` }
     }
     if (text.startsWith("error ")) return { ok: false, message: text.slice(6) }
     return { ok: false, message: "The screen did not open that address." }
@@ -404,18 +411,87 @@ export async function setLayoutAddress(computer: string, screen: string, url: st
   return { ok: false, message: "The screen did not open that address." }
 }
 
+function computerForScreen(screen: string) {
+  for (const [computer, screens] of Object.entries(ADDRESS_SCREENS)) {
+    if (screens.includes(screen)) return computer
+  }
+  return ""
+}
+
+function sharePath(host: string, localPath: string) {
+  const match = /^([A-Za-z]):\\(.+)$/.exec(localPath)
+  if (!match) return ""
+  return `\\\\${host}\\${match[1].toLowerCase()}$\\${match[2]}`
+}
+
+function validProgram(exePath: string) {
+  return /^[A-Za-z]:\\[^<>:"|?*\r\n]+\.exe$/i.test(exePath) && exePath.length <= 260
+}
+
+export async function launchProgram(screen: string, exePath: string, name: string): Promise<LaunchResult> {
+  const computer = computerForScreen(screen)
+  const host = HOSTS[computer]
+  if (!host || !validProgram(exePath)) return { ok: false, message: "Choose a program, then tap a screen." }
+  if (!readLayoutState()[computer]) return { ok: false, message: "Confirm a layout, then open the program." }
+  if (process.platform !== "win32") return { ok: false, message: "Run this page on the touchscreen." }
+  const remote = sharePath(host, exePath)
+  if (!remote) return { ok: false, message: "Choose a program with a local path, such as C:\\Apps\\Board.exe." }
+  try {
+    if (!fs.existsSync(remote)) return { ok: false, message: `That program is not on ${host} at ${exePath}.` }
+  } catch {
+    return { ok: false, message: `Could not reach the layout on ${host}.` }
+  }
+  const root = path.join(layoutsRoot(host), `computer-${computer}`)
+  const requests = path.join(root, "app-requests")
+  const results = path.join(root, "app-results")
+  const resultFile = path.join(results, `${screen}.txt`)
+  const requestFile = path.join(requests, `${screen}.txt`)
+  try {
+    fs.mkdirSync(requests, { recursive: true })
+    fs.mkdirSync(results, { recursive: true })
+    fs.rmSync(resultFile, { force: true })
+    fs.writeFileSync(`${requestFile}.tmp`, exePath, "utf8")
+    fs.renameSync(`${requestFile}.tmp`, requestFile)
+  } catch {
+    return { ok: false, message: `Could not reach the layout on ${host}.` }
+  }
+  const started = Date.now()
+  let sawWorking = false
+  while (Date.now() - started < 30000) {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    let text = ""
+    try {
+      text = fs.readFileSync(resultFile, "utf8").trim()
+    } catch {
+      text = ""
+    }
+    if (!text) {
+      if (!sawWorking && Date.now() - started > 2500) return { ok: false, message: "Confirm a layout, then open the program." }
+      continue
+    }
+    if (text === "working") {
+      sawWorking = true
+      continue
+    }
+    if (text === "ok") return { ok: true, message: `Opened ${name}.` }
+    if (text.startsWith("error ")) return { ok: false, message: text.slice(6) }
+    return { ok: false, message: "The program did not open." }
+  }
+  return { ok: false, message: "The program did not open." }
+}
+
 const VNC_NAMES: Record<string, string> = {
-  "101": "Computer 1",
-  "102": "Computer 2",
-  "103": "Computer 3",
+  "101": "Screens 1–8",
+  "102": "Screens 9–12 and 14–17",
+  "103": "Screens 13 and 18",
 }
 
 export function openVnc(computer: string): LaunchResult {
   const host = HOSTS[computer]
   const name = VNC_NAMES[computer]
-  if (!host || !name) return { ok: false, message: "That computer is not on this stand." }
+  if (!host || !name) return { ok: false, message: "That screen group is not on this stand." }
   if (process.platform !== "win32") {
-    return { ok: false, message: "Run this page on the touchscreen computer to open VNC." }
+    return { ok: false, message: "Run this page on the touchscreen to open the remote desktop." }
   }
   const viewerPath = "C:\\Program Files\\RealVNC\\VNC Viewer\\vncviewer.exe"
   const shortcut = path.join("C:\\Program Files\\RealVNC\\VNC Viewer", `${host}.lnk`)
@@ -440,5 +516,5 @@ export function openVnc(computer: string): LaunchResult {
   keyboard.stdout.resume()
   keyboard.stderr.resume()
   keyboard.unref()
-  return { ok: true, message: `${name} is open on this screen. Use Close to come back.` }
+  return { ok: true, message: `The remote desktop for ${name.toLowerCase()} is open. Use Close to come back.` }
 }

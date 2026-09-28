@@ -398,7 +398,7 @@ $timer.Add_Tick({
                 }
             }
             $script:styledHwnd = $session.Hwnd
-            $title.Text = "$($script:Name)     $($script:Address)"
+            $title.Text = $script:Name
             if ($script:focusedHwnd -ne $session.Hwnd) {
                 [VncHostWin]::Focus($session.Hwnd)
                 $script:focusedHwnd = $session.Hwnd
