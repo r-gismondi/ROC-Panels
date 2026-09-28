@@ -63,6 +63,7 @@ public static class VncKeyboardWin {
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -77,6 +78,10 @@ public static class VncKeyboardWin {
         ex |= 0x08000000;
         ex |= 0x00000080;
         SetWindowLong(hwnd, -20, ex);
+    }
+
+    public static void StayOnTop(IntPtr hwnd) {
+        SetWindowPos(hwnd, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
     }
 
     public static void FocusSession() {
@@ -289,8 +294,10 @@ $keyboard.BackColor = $panelBg
 $keyboard.Text = "VNC Keyboard"
 $keyboard.Visible = $false
 $keyboard.Add_HandleCreated({ [VncKeyboardWin]::NoActivate($keyboard.Handle) })
-$keyboardHeight = 474
-$keyboard.Bounds = New-Object System.Drawing.Rectangle $area.X, ($area.Bottom - $keyboardHeight), $area.Width, $keyboardHeight
+$keyboardWidth = [Math]::Min(1040, $area.Width - 80)
+$keyboardHeight = [Math]::Min(380, $area.Height - 160)
+$keyboard.Bounds = New-Object System.Drawing.Rectangle (($area.Left + [Math]::Floor(($area.Width - $keyboardWidth) / 2)), ($area.Bottom - $keyboardHeight - 16)), $keyboardWidth, $keyboardHeight
+$script:keyboardPlaced = $false
 
 $dragBar = New-Object System.Windows.Forms.Panel
 $dragBar.Dock = [System.Windows.Forms.DockStyle]::Top
@@ -381,7 +388,8 @@ $actions.ColumnCount = 6
 foreach ($width in @(14, 14, 30, 14, 14, 14)) {
     [void]$actions.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle ([System.Windows.Forms.SizeType]::Percent, $width)))
 }
-$windowsButton = New-Key "Windows" { [VncKeyboardWin]::Tap([uint16]0x5B, $false) } 14
+$windowsButton = New-Key ([string][char]0xE782) { [VncKeyboardWin]::Tap([uint16]0x5B, $false) } 22
+$windowsButton.Font = New-Object System.Drawing.Font "Segoe MDL2 Assets", 22
 $shiftButton = New-Key "Shift" { $script:shift = -not $script:shift; Update-ShiftLabels } 14
 $spaceButton = New-Key "Space" { [VncKeyboardWin]::Tap([uint16]0x20, $false) } 14
 $backButton = New-Key "Backspace" { [VncKeyboardWin]::Tap([uint16]0x08, $false) } 13
@@ -395,12 +403,87 @@ $actions.Controls.Add($enterButton, 4, 0)
 $actions.Controls.Add($hideButton, 5, 0)
 $table.Controls.Add($actions, 0, 5)
 
+$script:resizing = $false
+$script:resizeCorner = ""
+$script:resizeCursor = $null
+$script:resizeBounds = $null
+function Start-Resize([string]$corner, [System.Windows.Forms.Control]$grip) {
+    $script:resizing = $true
+    $script:resizeCorner = $corner
+    $script:resizeCursor = [System.Windows.Forms.Cursor]::Position
+    $script:resizeBounds = $keyboard.Bounds
+    $grip.Capture = $true
+}
+function Move-Resize {
+    if (-not $script:resizing) { return }
+    $cursor = [System.Windows.Forms.Cursor]::Position
+    $dx = $cursor.X - $script:resizeCursor.X
+    $dy = $cursor.Y - $script:resizeCursor.Y
+    $bounds = $script:resizeBounds
+    $x = $bounds.X
+    $y = $bounds.Y
+    $w = $bounds.Width
+    $h = $bounds.Height
+    switch ($script:resizeCorner) {
+        "se" { $w += $dx; $h += $dy }
+        "sw" { $x += $dx; $w -= $dx; $h += $dy }
+        "ne" { $y += $dy; $w += $dx; $h -= $dy }
+        "nw" { $x += $dx; $y += $dy; $w -= $dx; $h -= $dy }
+    }
+    if ($w -lt 760) {
+        if ($script:resizeCorner -in @("sw", "nw")) { $x -= (760 - $w) }
+        $w = 760
+    }
+    if ($h -lt 300) {
+        if ($script:resizeCorner -in @("ne", "nw")) { $y -= (300 - $h) }
+        $h = 300
+    }
+    $home = [System.Windows.Forms.Screen]::FromPoint($cursor).WorkingArea
+    if ($w -gt $home.Width) { $w = $home.Width }
+    if ($h -gt ($home.Height - 24)) { $h = $home.Height - 24 }
+    $keyboard.Bounds = New-Object System.Drawing.Rectangle $x, $y, $w, $h
+}
+function New-Corner([string]$corner) {
+    $grip = New-Object System.Windows.Forms.Panel
+    $grip.Size = New-Object System.Drawing.Size 36, 36
+    $grip.BackColor = [System.Drawing.Color]::FromArgb(18, 92, 176)
+    $grip.Tag = $corner
+    switch ($corner) {
+        "nw" { $grip.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left; $grip.Location = New-Object System.Drawing.Point 0, 0; $grip.Cursor = [System.Windows.Forms.Cursors]::SizeNWSE }
+        "ne" { $grip.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right; $grip.Location = New-Object System.Drawing.Point ($keyboard.ClientSize.Width - 36), 0; $grip.Cursor = [System.Windows.Forms.Cursors]::SizeNESW }
+        "sw" { $grip.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left; $grip.Location = New-Object System.Drawing.Point 0, ($keyboard.ClientSize.Height - 36); $grip.Cursor = [System.Windows.Forms.Cursors]::SizeNESW }
+        "se" { $grip.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right; $grip.Location = New-Object System.Drawing.Point ($keyboard.ClientSize.Width - 36), ($keyboard.ClientSize.Height - 36); $grip.Cursor = [System.Windows.Forms.Cursors]::SizeNWSE }
+    }
+    $grip.Add_MouseDown({
+        if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Start-Resize $this.Tag $this }
+    })
+    $grip.Add_MouseMove({ Move-Resize })
+    $grip.Add_MouseUp({
+        $script:resizing = $false
+        $this.Capture = $false
+    })
+    $keyboard.Controls.Add($grip)
+    $grip.BringToFront()
+}
+New-Corner "nw"
+New-Corner "ne"
+New-Corner "sw"
+New-Corner "se"
+
 function Show-KeyboardPanel {
     Get-Process -Name osk -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    $here = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position).WorkingArea
-    $keyboard.Bounds = New-Object System.Drawing.Rectangle $here.X, ($here.Bottom - $keyboardHeight), $here.Width, $keyboardHeight
+    if (-not $script:keyboardPlaced) {
+        $here = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position).WorkingArea
+        $width = [Math]::Min(1040, $here.Width - 80)
+        $height = [Math]::Min(380, $here.Height - 160)
+        $x = $here.Left + [Math]::Floor(($here.Width - $width) / 2)
+        $y = $here.Bottom - $height - 16
+        $keyboard.Bounds = New-Object System.Drawing.Rectangle $x, $y, $width, $height
+        $script:keyboardPlaced = $true
+    }
     $keyboard.Show()
     $keyboard.TopMost = $true
+    [VncKeyboardWin]::StayOnTop($keyboard.Handle)
 }
 
 $icon.Add_MouseUp({

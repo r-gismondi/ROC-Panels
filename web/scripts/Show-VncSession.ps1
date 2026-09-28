@@ -140,8 +140,8 @@ public static class VncHostWin {
         ShowWindow(hwnd, 0);
     }
 
-    public static void Place(IntPtr hwnd, int x, int y, int w, int h, bool restyle) {
-        if (!IsWindow(hwnd)) return;
+    public static bool Place(IntPtr hwnd, int x, int y, int w, int h, bool restyle) {
+        if (!IsWindow(hwnd)) return false;
         if (restyle) {
             int style = GetWindowLong(hwnd, GWL_STYLE);
             style &= ~WS_CAPTION;
@@ -155,19 +155,21 @@ public static class VncHostWin {
             ShowWindow(hwnd, 0);
             ShowWindow(hwnd, 5);
             SetWindowPos(hwnd, new IntPtr(-1), x, y, w, h, SWP_SHOWWINDOW | SWP_FRAMECHANGED);
-            return;
+            return true;
         }
         if (IsIconic(hwnd)) ShowWindow(hwnd, 9);
         if (!IsAt(hwnd, x, y, w, h)) {
             SetWindowPos(hwnd, new IntPtr(-1), x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            return true;
         }
+        return false;
     }
 
     public static bool IsAt(IntPtr hwnd, int x, int y, int w, int h) {
         if (!IsWindow(hwnd) || IsIconic(hwnd)) return false;
         RECT rect;
         GetWindowRect(hwnd, out rect);
-        return rect.Left == x && rect.Top == y && (rect.Right - rect.Left) == w && (rect.Bottom - rect.Top) == h;
+        return Math.Abs(rect.Left - x) <= 8 && Math.Abs(rect.Top - y) <= 8 && Math.Abs((rect.Right - rect.Left) - w) <= 8 && Math.Abs((rect.Bottom - rect.Top) - h) <= 8;
     }
 
     public static void Raise(IntPtr hwnd) {
@@ -384,7 +386,13 @@ $timer.Add_Tick({
             $script:misses = 0
             $script:sessionHwnd = $session.Hwnd
             $restyle = $script:styledHwnd -ne $session.Hwnd
-            [VncHostWin]::Place($session.Hwnd, $contentX, $contentY, $contentW, $contentH, $restyle)
+            $placed = [VncHostWin]::Place($session.Hwnd, $contentX, $contentY, $contentW, $contentH, $restyle)
+            if ($placed) {
+                foreach ($keyboardTitle in @("VNC Keyboard", "Keyboard")) {
+                    $keyboardHwnd = [VncHostWin]::FindTitle($keyboardTitle)
+                    if ($keyboardHwnd -ne [IntPtr]::Zero) { [VncHostWin]::Raise($keyboardHwnd) }
+                }
+            }
             $script:styledHwnd = $session.Hwnd
             $title.Text = "$($script:Name)     $($script:Address)"
             if ($script:focusedHwnd -ne $session.Hwnd) {
