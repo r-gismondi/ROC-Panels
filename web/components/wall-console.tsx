@@ -386,6 +386,32 @@ export function WallConsole() {
     }
   }
 
+  async function closeAllEdge() {
+    if (layoutBusy.current) return
+    layoutBusy.current = true
+    setLayoutStatus("Closing Edge on every computer…")
+    const computers = ["101", "102", "103"] as const
+    try {
+      const results = await Promise.all(
+        computers.map(async (computer) => {
+          const response = await fetch("/api/layout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ computer, preset: "close" }),
+          })
+          const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null
+          return { ok: response.ok, text: body?.message || body?.error || "The layout did not start." }
+        }),
+      )
+      const failed = results.filter((item) => !item.ok)
+      setLayoutStatus(failed.length === 0 ? "Closed Edge on every computer." : failed.map((item) => item.text).join(" "))
+    } catch {
+      setLayoutStatus("Could not reach the layout service.")
+    } finally {
+      layoutBusy.current = false
+    }
+  }
+
   async function controlWindow(action: "minimize" | "close") {
     try {
       const response = await fetch("/api/window", {
@@ -697,6 +723,9 @@ export function WallConsole() {
           onClose={() => {
             void runLayout(footer.computer, "close")
           }}
+          onCloseAll={() => {
+            void closeAllEdge()
+          }}
         />
         <div className="mt-3 border-t border-cyan-300/25 pt-3">
           <p className="mb-2 flex items-center gap-1.5 text-[11px] tracking-[0.2em] text-cyan-100/70">
@@ -920,6 +949,7 @@ function PresetRow({
   onConfirm,
   onCancel,
   onClose,
+  onCloseAll,
 }: {
   label: string
   presets: Preset[]
@@ -929,6 +959,7 @@ function PresetRow({
   onConfirm: () => void
   onCancel: () => void
   onClose: () => void
+  onCloseAll: () => void
 }) {
   return (
     <div>
@@ -937,9 +968,14 @@ function PresetRow({
           <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{label}</p>
           <p className="text-xs text-cyan-100/80">{pending ? "Preview on the screens. Confirm opens Edge." : "Choose a preset to preview it on the screens."}</p>
         </div>
-        <GlowButton tone="alert" onClick={onClose}>
-          Close Edge
-        </GlowButton>
+        <div className="flex items-center gap-2">
+          <GlowButton tone="alert" onClick={onClose}>
+            Close Edge
+          </GlowButton>
+          <GlowButton tone="alert" onClick={onCloseAll}>
+            Close all
+          </GlowButton>
+        </div>
       </div>
       <div className={`grid grid-cols-2 gap-2 ${presets.length > 2 ? "sm:grid-cols-5" : "sm:grid-cols-2 sm:max-w-md"}`}>
         {presets.map((item) => (
