@@ -13,7 +13,7 @@ $HomeUrl = "https://ccv2.mtllc.us/landing"
 $LayoutScreens = @("TV13", "TV18")
 
 if (-not ("PanelWin" -as [type])) {
-    $panelDll = "C:\layouts\PanelWin.dll"
+    $panelDll = "C:\layouts\PanelWin2.dll"
     if (-not (Test-Path -LiteralPath $panelDll)) {
         Add-Type -OutputAssembly $panelDll -TypeDefinition @"
 using System;
@@ -106,51 +106,7 @@ public static class PanelWin {
             ex &= ~0x00000008;
             SetWindowLong32(hwnd, -20, ex);
         }
-        PanelRect window;
-        GetWindowRect(hwnd, out window);
-        int left = 0;
-        int top = 0;
-        int right = 0;
-        int bottom = 0;
-        IntPtr widget = PageWidget(hwnd);
-        if (widget != IntPtr.Zero) {
-            PanelRect page;
-            GetWindowRect(widget, out page);
-            left = page.Left - window.Left;
-            top = page.Top - window.Top;
-            right = window.Right - page.Right;
-            bottom = window.Bottom - page.Bottom;
-            if (left < 0) left = 0;
-            if (top < 0) top = 0;
-            if (right < 0) right = 0;
-            if (bottom < 0) bottom = 0;
-        } else {
-            PanelPoint origin = new PanelPoint();
-            ClientToScreen(hwnd, ref origin);
-            top = origin.Y - window.Top + 48;
-            left = 8;
-            right = 8;
-            bottom = 8;
-            if (top < 48) top = 88;
-        }
-        if (h >= 1080) {
-            SetWindowPos(hwnd, new IntPtr(-2), x, y, w, h, 0x0020 | 0x0040);
-            return;
-        }
-        int posX = x - left;
-        int posY = y - top;
-        int posW = w + left + right;
-        int posH = h + top + bottom;
-        PanelPlacement placement = new PanelPlacement();
-        placement.length = Marshal.SizeOf(typeof(PanelPlacement));
-        placement.showCmd = 1;
-        placement.normalPosition.Left = posX;
-        placement.normalPosition.Top = posY;
-        placement.normalPosition.Right = posX + posW;
-        placement.normalPosition.Bottom = posY + posH;
-        SetWindowPlacement(hwnd, ref placement);
-        SetWindowPos(hwnd, new IntPtr(-2), posX, posY, posW, posH, 0x0020 | 0x0040);
-        SetWindowRgn(hwnd, CreateRectRgn(left, top, left + w, top + h), true);
+        SetWindowPos(hwnd, new IntPtr(-2), x, y, w, h, 0x0020 | 0x0040);
     }
     public static void PrepareHost(IntPtr host) {
         int style = GetWindowLong32(host, -16);
@@ -197,33 +153,24 @@ public static class PanelWin {
         }
         int left, top, right, bottom;
         Measure(hwnd, out left, out top, out right, out bottom);
-        if (h >= 1080) {
-            if (top < 40) top = 48;
-            int childW = w + left + right;
-            int childH = h + top + bottom;
-            PanelRect hostRect;
-            bool hostOk = GetWindowRect(host, out hostRect)
-                && hostRect.Left == x && hostRect.Top == y
-                && (hostRect.Right - hostRect.Left) == w
-                && (hostRect.Bottom - hostRect.Top) == h;
-            if (!hostOk) SetWindowPos(host, new IntPtr(-2), x, y, w, h, 0x0014);
-            PanelRect window;
-            int wantLeft = x - left;
-            int wantTop = y - top;
-            bool childOk = GetWindowRect(hwnd, out window)
-                && window.Left == wantLeft && window.Top == wantTop
-                && (window.Right - window.Left) == childW
-                && (window.Bottom - window.Top) == childH;
-            if (!childOk) MoveWindow(hwnd, -left, -top, childW, childH, true);
-            return;
-        }
-        if (alreadyChild) return;
-        if (top < 40) top = 40;
-        int hostW = w + left + right;
-        int hostH = h + top + bottom;
-        SetWindowPos(host, new IntPtr(-2), x - left, y - top, hostW, hostH, 0x0040);
-        SetWindowRgn(host, CreateRectRgn(left, top, left + w, top + h), true);
-        MoveWindow(hwnd, 0, 0, hostW, hostH, true);
+        if (top < 40) top = 48;
+        int childW = w + left + right;
+        int childH = h + top + bottom;
+        SetWindowRgn(host, IntPtr.Zero, false);
+        PanelRect hostRect;
+        bool hostOk = GetWindowRect(host, out hostRect)
+            && hostRect.Left == x && hostRect.Top == y
+            && (hostRect.Right - hostRect.Left) == w
+            && (hostRect.Bottom - hostRect.Top) == h;
+        if (!hostOk) SetWindowPos(host, new IntPtr(-2), x, y, w, h, 0x0014);
+        PanelRect window;
+        int wantLeft = x - left;
+        int wantTop = y - top;
+        bool childOk = GetWindowRect(hwnd, out window)
+            && window.Left == wantLeft && window.Top == wantTop
+            && (window.Right - window.Left) == childW
+            && (window.Bottom - window.Top) == childH;
+        if (!childOk) MoveWindow(hwnd, -left, -top, childW, childH, true);
     }
 }
 "@
@@ -476,7 +423,7 @@ $timer.Interval = 1000
 $timer.Add_Tick({
     $script:fitPasses += 1
     foreach ($item in $opened) {
-        if ($item.H -ge 1080 -and [PanelWin]::IsWindow($item.Hwnd)) {
+        if ([PanelWin]::IsWindow($item.Hwnd)) {
             [void][PanelWin]::Fit($item.Hwnd, $item.Host, $item.X, $item.Y, $item.W, $item.H)
         }
     }
