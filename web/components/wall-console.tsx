@@ -379,6 +379,22 @@ export function WallConsole() {
     }
   }
 
+  async function controlWindow(action: "minimize" | "close") {
+    try {
+      const response = await fetch("/api/window", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      })
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null
+        setLayoutStatus(body?.error || "The console window could not be changed.")
+      }
+    } catch {
+      setLayoutStatus("Could not reach the console window.")
+    }
+  }
+
   async function runVnc(computer: "101" | "102" | "103") {
     const name = computer === "101" ? "Computer 1" : computer === "102" ? "Computer 2" : "Computer 3"
     setLayoutStatus(`Opening VNC to ${name}…`)
@@ -491,7 +507,24 @@ export function WallConsole() {
             <p className="text-[11px] tracking-[0.22em] text-cyan-100/70">PANEL CONTROL</p>
           </div>
         </div>
-        <p className="hidden text-xs tracking-[0.18em] text-cyan-100/70 sm:block">THIS STAND</p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              aria-label="Minimize"
+              onClick={() => void controlWindow("minimize")}
+              className="flex h-9 w-11 items-center justify-center rounded-lg border border-cyan-200/35 bg-[#16315f] text-lg leading-none text-cyan-50 transition hover:bg-white/10"
+            >
+              –
+            </button>
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={() => void controlWindow("close")}
+              className="flex h-9 w-11 items-center justify-center rounded-lg border border-cyan-200/35 bg-[#16315f] text-xl leading-none text-cyan-50 transition hover:bg-red-500/40"
+            >
+              ×
+            </button>
+          </div>
       </header>
 
       <section className="grid items-start gap-4 px-4 py-4 lg:grid-cols-[4fr_minmax(16rem,18rem)_5fr] lg:px-6">

@@ -3,7 +3,7 @@ import { promisify } from "util"
 import fs from "fs"
 import os from "os"
 import path from "path"
-import { installRoot } from "@/lib/install-root"
+import { installRoot, scriptsDir } from "@/lib/install-root"
 
 const execFileAsync = promisify(execFile)
 
@@ -114,7 +114,7 @@ function publishWatcher(host: string) {
   const root = layoutsRoot(host)
   fs.mkdirSync(root, { recursive: true })
   for (const name of ["Watch-Launch.ps1", "Start-Watch.bat", "Launch-InSession.ps1"]) {
-    fs.copyFileSync(path.join(installRoot(), "scripts", name), path.join(root, name))
+    fs.copyFileSync(path.join(scriptsDir(), name), path.join(root, name))
   }
 }
 
@@ -195,6 +195,35 @@ async function ensureWatcher(host: string, user: string, password: string) {
   throw new Error(`The layout watcher on ${host} did not start.`)
 }
 
+function readEnvValue(file: string, key: string) {
+  try {
+    const text = fs.readFileSync(file, "utf8")
+    const match = text.match(new RegExp(`^${key}=(.*)$`, "m"))
+    return match?.[1]?.trim() || ""
+  } catch {
+    return ""
+  }
+}
+
+function layoutAccount() {
+  let user = process.env.LAYOUT_USER || ""
+  let password = process.env.LAYOUT_PASSWORD || ""
+  const configPath = path.join(installRoot(), "pedestal.config.json")
+  try {
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as { layoutUser?: string; layoutPassword?: string }
+    if (!user && config.layoutUser) user = config.layoutUser
+    if (!password && config.layoutPassword) password = config.layoutPassword
+  } catch {
+    // The development server keeps the account in .env.local.
+  }
+  const envFiles = [path.join(process.cwd(), ".env.local"), path.join(installRoot(), "web", ".env.local")]
+  for (const file of envFiles) {
+    if (!user) user = readEnvValue(file, "LAYOUT_USER")
+    if (!password) password = readEnvValue(file, "LAYOUT_PASSWORD")
+  }
+  return { user: user || "Administrator", password }
+}
+
 export async function launchLayout(computer: string, preset: string): Promise<LaunchResult> {
   const command = layoutCommand(computer, preset)
   if (!command) return { ok: false, message: "That preset is not on this computer." }
@@ -204,9 +233,10 @@ export async function launchLayout(computer: string, preset: string): Promise<La
       message: "Run this page on a Windows computer on the wall network. Preset buttons launch the Edge layouts from there.",
     }
   }
-  const user = process.env.LAYOUT_USER || "Administrator"
-  const password = process.env.LAYOUT_PASSWORD || ""
-  if (!password) return { ok: false, message: "Set LAYOUT_PASSWORD to the wall Administrator password, then restart this page." }
+  const account = layoutAccount()
+  const user = account.user
+  const password = account.password
+  if (!password) return { ok: false, message: "Set layoutPassword in pedestal.config.json, then start the console again." }
 
   try {
     const known = (watcherReadyUntil.get(command.host) ?? 0) > Date.now()
@@ -325,7 +355,7 @@ export function openVnc(computer: string): LaunchResult {
   if (!fs.existsSync(viewerPath) || !fs.existsSync(shortcut)) {
     return { ok: false, message: `The VNC shortcut for ${host} was not found.` }
   }
-  const sessionScript = path.join(installRoot(), "scripts", "Show-VncSession.ps1")
+  const sessionScript = path.join(scriptsDir(), "Show-VncSession.ps1")
   const session = spawn(
     "powershell.exe",
     ["-NoProfile", "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", sessionScript, "-ComputerName", name, "-Address", host],
@@ -334,7 +364,7 @@ export function openVnc(computer: string): LaunchResult {
   session.stdout.resume()
   session.stderr.resume()
   session.unref()
-  const button = path.join(installRoot(), "scripts", "Show-KeyboardButton.ps1")
+  const button = path.join(scriptsDir(), "Show-KeyboardButton.ps1")
   const keyboard = spawn(
     "powershell.exe",
     ["-NoProfile", "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", button],

@@ -62,17 +62,24 @@ New-Item -ItemType Directory -Force -Path (Join-Path $dist "config") | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo "config\panels.json") -Destination (Join-Path $dist "config\panels.json")
 $scripts = Join-Path $dist "scripts"
 New-Item -ItemType Directory -Force -Path $scripts | Out-Null
-foreach ($name in @("Watch-Launch.ps1", "Start-Watch.bat", "Launch-InSession.ps1", "Show-VncSession.ps1", "Show-KeyboardButton.ps1")) {
+foreach ($name in @("Watch-Launch.ps1", "Start-Watch.bat", "Launch-InSession.ps1", "Show-VncSession.ps1", "Show-KeyboardButton.ps1", "Set-ConsoleWindow.ps1")) {
     Copy-Item -LiteralPath (Join-Path $web "scripts\$name") -Destination (Join-Path $scripts $name)
 }
 Copy-Item -LiteralPath (Join-Path $repo "layouts") -Destination (Join-Path $dist "layouts") -Recurse
 
-@"
-{
-  "layoutUser": "Administrator",
-  "layoutPassword": ""
+$layoutUser = "Administrator"
+$layoutPassword = ""
+$envFile = Join-Path $web ".env.local"
+if (Test-Path -LiteralPath $envFile) {
+    foreach ($line in Get-Content -LiteralPath $envFile) {
+        if ($line -match '^LAYOUT_USER=(.*)$') { $layoutUser = $Matches[1].Trim() }
+        if ($line -match '^LAYOUT_PASSWORD=(.*)$') { $layoutPassword = $Matches[1].Trim() }
+    }
 }
-"@ | Set-Content -LiteralPath (Join-Path $dist "pedestal.config.json") -Encoding Ascii
+@{
+    layoutUser = $layoutUser
+    layoutPassword = $layoutPassword
+} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dist "pedestal.config.json") -Encoding Ascii
 
 Write-Host "Compiling ROC-Panels.exe..."
 & $csc /nologo /optimize /target:winexe /reference:System.Windows.Forms.dll /out:"$(Join-Path $dist 'ROC-Panels.exe')" (Join-Path $PSScriptRoot "Launcher.cs")
@@ -81,4 +88,5 @@ if ($LASTEXITCODE -ne 0) { throw "The launcher did not compile." }
 Write-Host ""
 Write-Host "Pedestal folder: $dist"
 Write-Host "Copy that whole folder to the 55 inch pedestal and run ROC-Panels.exe."
-Write-Host "Set layoutPassword in pedestal.config.json to the wall Administrator password before opening layouts."
+if ($layoutPassword) { Write-Host "The wall account was copied into pedestal.config.json." }
+else { Write-Host "Set layoutPassword in pedestal.config.json before opening layouts." }
