@@ -507,55 +507,59 @@ export function WallConsole() {
           height={controlHeight}
         />
 
-        <div ref={controlRef} className="flex flex-col justify-center gap-4 rounded-2xl border border-cyan-300/40 bg-[#0a2f86]/55 p-4 shadow-[0_0_28px_rgba(40,140,255,0.25)]">
-            <div>
-              <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{scopeLabel}</p>
-              <h1 className="mt-1 text-3xl font-semibold tracking-wide">{scopeTitle}</h1>
-              <p className="mt-1 min-h-[3.75rem] text-sm leading-5 text-cyan-100/80">{scopeDetail}</p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <GlowButton active={allOn} onClick={() => applyPower(true)}>
-                On
-              </GlowButton>
-              <GlowButton active={allOff} tone="alert" onClick={() => applyPower(false)}>
-                Off
-              </GlowButton>
-            </div>
-
-            <div>
-              <div className="mb-2 flex items-baseline justify-between text-sm">
-                <span>Brightness</span>
-                <span className="font-mono text-cyan-100">{sameBrightness ? `${shownBrightness}%` : "Mixed"}</span>
+        <div className="flex flex-col gap-4 rounded-2xl border border-cyan-300/40 bg-[#0a2f86]/55 p-4 shadow-[0_0_28px_rgba(40,140,255,0.25)]">
+            <div ref={controlRef} className="flex flex-col gap-4">
+              <div>
+                <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{scopeLabel}</p>
+                <h1 className="mt-1 text-3xl font-semibold tracking-wide">{scopeTitle}</h1>
+                <p className="mt-1 min-h-[3.75rem] text-sm leading-5 text-cyan-100/80">{scopeDetail}</p>
               </div>
-              <Slider
-                min={0}
-                max={100}
-                value={[shownBrightness]}
-                onValueChange={(value) => applyBrightness(Array.isArray(value) ? value[0] : value)}
-                aria-label="Brightness"
-              />
+
+              <div className="grid grid-cols-2 gap-2">
+                <GlowButton active={allOn} onClick={() => applyPower(true)}>
+                  On
+                </GlowButton>
+                <GlowButton active={allOff} tone="alert" onClick={() => applyPower(false)}>
+                  Off
+                </GlowButton>
+              </div>
+
+              <div>
+                <div className="mb-2 flex items-baseline justify-between text-sm">
+                  <span>Brightness</span>
+                  <span className="text-cyan-100 tabular-nums">{sameBrightness ? `${shownBrightness}%` : "Mixed"}</span>
+                </div>
+                <Slider
+                  min={0}
+                  max={100}
+                  value={[shownBrightness]}
+                  onValueChange={(value) => applyBrightness(Array.isArray(value) ? value[0] : value)}
+                  aria-label="Brightness"
+                />
+              </div>
+
+              <p className={`text-xs leading-5 text-cyan-100/80 ${current ? "invisible" : ""}`} aria-hidden={Boolean(current)}>
+                Tap one screen to type its address.
+              </p>
+              <p className="line-clamp-2 min-h-10 text-xs leading-5 text-cyan-100">{layoutStatus}</p>
             </div>
 
             {current ? (
-              <div className="flex flex-col gap-2">
-                <div className="flex items-baseline justify-between gap-2">
-                  <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">ADDRESS</p>
-                  <p className="text-[11px] text-cyan-100/70">Screen {screenNumber(current.id)}</p>
-                </div>
+              <div className="flex flex-col gap-2 border-t border-cyan-300/25 pt-4">
+                <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">ADDRESS</p>
                 <button
                   type="button"
                   onClick={() => {
                     setKeyboardOpen(true)
                     setReplaceAddress(true)
                   }}
-                  className={`min-h-16 rounded-lg border px-3 py-2 text-left ${
+                  className={`rounded-lg border px-3 py-2 text-left ${
                     keyboardOpen && replaceAddress ? "border-white bg-white/10" : "border-cyan-300/40 bg-[#08245f]/80"
                   }`}
                 >
-                  <span className="block break-all font-mono text-sm leading-5">{addressValue || "Tap to type an address"}</span>
+                  <span className="block truncate text-sm leading-5">{addressValue || "Tap to type an address"}</span>
                 </button>
-                <p className="text-xs leading-5 text-cyan-100/80">
+                <p className="line-clamp-2 text-xs leading-5 text-cyan-100/80">
                   {zoneDetail(shownZone)}
                   {previewPending ? " Confirm the layout preview, then set the address." : ""}
                 </p>
@@ -563,15 +567,7 @@ export function WallConsole() {
                   Open address
                 </GlowButton>
               </div>
-            ) : (
-              <p className="text-xs leading-5 text-cyan-100/80">Tap one screen to type its address.</p>
-            )}
-
-            <p className="text-xs leading-5 text-cyan-100/70">
-              {allOn ? "Power on" : allOff ? "Power off" : "Power is mixed"} for{" "}
-              {selection.screen === "all" ? `panel ${panel}` : scopeTitle}.
-            </p>
-            <p className="min-h-10 whitespace-pre-wrap text-xs leading-5 text-cyan-100">{layoutStatus}</p>
+            ) : null}
           </div>
 
         <section
