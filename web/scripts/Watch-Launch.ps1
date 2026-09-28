@@ -6,7 +6,13 @@ $alive = Join-Path $root "watcher-alive.txt"
 New-Item -ItemType Directory -Force -Path $queue | Out-Null
 
 $mutex = New-Object System.Threading.Mutex($false, "WallLayoutWatch")
-if (-not $mutex.WaitOne(0)) { exit 0 }
+$owned = $false
+try {
+    $owned = $mutex.WaitOne(0)
+} catch [System.Threading.AbandonedMutexException] {
+    $owned = $true
+}
+if (-not $owned) { exit 0 }
 
 $lastBeat = [datetime]::MinValue
 while ($true) {
@@ -24,7 +30,9 @@ while ($true) {
         $work = Split-Path -Parent $bat
         $style = "Normal"
         if ($bat -like "*Edge-Close.bat") { $style = "Hidden" }
-        Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $bat -WorkingDirectory $work -WindowStyle $style | Out-Null
+        try {
+            Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $bat -WorkingDirectory $work -WindowStyle $style
+        } catch {}
     }
     Start-Sleep -Milliseconds 40
 }
