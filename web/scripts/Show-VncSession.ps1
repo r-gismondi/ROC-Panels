@@ -284,7 +284,7 @@ $area = $screen.WorkingArea
 $navy = [System.Drawing.Color]::FromArgb(7, 26, 77)
 $blue = [System.Drawing.Color]::FromArgb(8, 47, 140)
 $cyan = [System.Drawing.Color]::FromArgb(125, 211, 252)
-$barHeight = 84
+$barHeight = 56
 
 $form = New-Object System.Windows.Forms.Form
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
@@ -305,22 +305,22 @@ $form.Controls.Add($accent)
 $title = New-Object System.Windows.Forms.Label
 $title.Dock = [System.Windows.Forms.DockStyle]::Fill
 $title.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
-$title.Padding = New-Object System.Windows.Forms.Padding 28, 0, 12, 0
+$title.Padding = New-Object System.Windows.Forms.Padding 16, 0, 12, 0
 $title.BackColor = $navy
 $title.ForeColor = [System.Drawing.Color]::White
-$title.Font = New-Object System.Drawing.Font "Segoe UI", 22
+$title.Font = New-Object System.Drawing.Font "Segoe UI", 16
 $title.Text = "Connecting to $Name…"
 $form.Controls.Add($title)
 
 $close = New-Object System.Windows.Forms.Button
 $close.Dock = [System.Windows.Forms.DockStyle]::Right
-$close.Width = 220
+$close.Width = 140
 $close.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $close.FlatAppearance.BorderSize = 0
 $close.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(16, 78, 168)
 $close.BackColor = $blue
 $close.ForeColor = [System.Drawing.Color]::White
-$close.Font = New-Object System.Drawing.Font "Segoe UI", 20
+$close.Font = New-Object System.Drawing.Font "Segoe UI", 16
 $close.Text = "Close"
 $close.TabStop = $false
 $form.Controls.Add($close)
@@ -367,10 +367,19 @@ $timer.Add_Tick({
             $session = $candidates | Select-Object -First 1
         }
 
-        $contentX = $area.X
-        $contentY = $area.Y + $barHeight
-        $contentW = $area.Width
-        $contentH = $area.Height - $barHeight
+        $maxW = $area.Width
+        $maxH = $area.Height - $barHeight
+        if ($maxH -lt 1) { $maxH = 1 }
+        $winW = $maxW
+        $winH = $maxH
+        if ($session -and $session.Width -gt 0 -and $session.Height -gt 0) {
+            $winW = [Math]::Min($session.Width, $maxW)
+            $winH = [Math]::Min($session.Height, $maxH)
+        }
+        $contentX = $area.X + [int][Math]::Floor([Math]::Max(0, $maxW - $winW) / 2)
+        $contentY = $area.Y + $barHeight + [int][Math]::Floor([Math]::Max(0, $maxH - $winH) / 2)
+        $contentW = $winW
+        $contentH = $winH
 
         if ($session) {
             $script:seenSession = $true

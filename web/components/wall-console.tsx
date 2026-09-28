@@ -428,6 +428,11 @@ export function WallConsole() {
     }
   }
 
+  function openRemote(screenId: string) {
+    const computer = COMPUTER_OF[screenId]
+    if (computer) void runVnc(computer)
+  }
+
   async function runVnc(computer: "101" | "102" | "103") {
     const name = computer === "101" ? "Computer 1" : computer === "102" ? "Computer 2" : "Computer 3"
     setLayoutStatus(`Opening VNC to ${name}…`)
@@ -571,6 +576,7 @@ export function WallConsole() {
           power={power}
           thumbStamp={thumbStamp}
           onSelect={setSelection}
+          onOpenRemote={openRemote}
           height={controlHeight}
         />
 
@@ -670,6 +676,7 @@ export function WallConsole() {
               thumbStamp={thumbStamp}
               onSelectFrame={() => setSelection({ panel: 2, screen: "computer-2" })}
               onSelectScreen={(screen) => setSelection({ panel: 2, screen })}
+              onOpenRemote={openRemote}
             />
             <ComputerFrame
               className="lg:col-span-1"
@@ -683,6 +690,7 @@ export function WallConsole() {
               thumbStamp={thumbStamp}
               onSelectFrame={() => setSelection({ panel: 2, screen: "computer-3" })}
               onSelectScreen={(screen) => setSelection({ panel: 2, screen })}
+              onOpenRemote={openRemote}
             />
           </div>
         </section>
@@ -727,18 +735,6 @@ export function WallConsole() {
             void closeAllEdge()
           }}
         />
-        <div className="mt-3 border-t border-cyan-300/25 pt-3">
-          <p className="mb-2 flex items-center gap-1.5 text-[11px] tracking-[0.2em] text-cyan-100/70">
-            <img src="/realvnc.png" alt="" width={20} height={20} className="size-5 shrink-0" />
-            VNC
-          </p>
-          <p className="mb-2 text-xs text-cyan-100/70">Opens on this screen. Close returns here.</p>
-          <div className="grid grid-cols-3 gap-2 sm:max-w-xl">
-            <GlowButton onClick={() => void runVnc("101")}>Computer 1</GlowButton>
-            <GlowButton onClick={() => void runVnc("102")}>Computer 2</GlowButton>
-            <GlowButton onClick={() => void runVnc("103")}>Computer 3</GlowButton>
-          </div>
-        </div>
       </footer>
       {keyboardOpen && current ? (
         <AddressKeyboard
@@ -768,6 +764,7 @@ function PanelFrame({
   power,
   thumbStamp,
   onSelect,
+  onOpenRemote,
   height,
 }: {
   panel: PanelId
@@ -779,6 +776,7 @@ function PanelFrame({
   power: Record<string, boolean>
   thumbStamp: number
   onSelect: (selection: Selection) => void
+  onOpenRemote: (screenId: string) => void
   height?: number
 }) {
   const ids = rows.flat().map((screen) => screen.id)
@@ -821,6 +819,7 @@ function PanelFrame({
                 on={power[screen.id]}
                 thumbStamp={thumbStamp}
                 onSelect={() => onSelect({ panel, screen: screen.id })}
+                onOpenRemote={() => onOpenRemote(screen.id)}
               />
             ))}
           </div>
@@ -843,6 +842,7 @@ function ComputerFrame({
   thumbStamp,
   onSelectFrame,
   onSelectScreen,
+  onOpenRemote,
 }: {
   className?: string
   title: string
@@ -855,6 +855,7 @@ function ComputerFrame({
   thumbStamp: number
   onSelectFrame: () => void
   onSelectScreen: (screen: string) => void
+  onOpenRemote: (screenId: string) => void
 }) {
   return (
     <div
@@ -878,6 +879,7 @@ function ComputerFrame({
                 on={power[screen.id]}
                 thumbStamp={thumbStamp}
                 onSelect={() => onSelectScreen(screen.id)}
+                onOpenRemote={() => onOpenRemote(screen.id)}
               />
             ))}
           </div>
@@ -906,6 +908,7 @@ function ScreenButton({
   on,
   thumbStamp,
   onSelect,
+  onOpenRemote,
 }: {
   screen: Screen
   preset: Preset
@@ -913,6 +916,7 @@ function ScreenButton({
   on: boolean
   thumbStamp: number
   onSelect: () => void
+  onOpenRemote: () => void
 }) {
   const group = preset.groups[screen.id] ?? 0
   const color = GROUP_COLOR[group % GROUP_COLOR.length]
@@ -923,6 +927,10 @@ function ScreenButton({
       onClick={(event) => {
         event.stopPropagation()
         onSelect()
+      }}
+      onDoubleClick={(event) => {
+        event.stopPropagation()
+        onOpenRemote()
       }}
       className="relative h-full min-h-0 overflow-hidden rounded-lg border text-center transition"
       style={{
