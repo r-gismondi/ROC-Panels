@@ -504,11 +504,6 @@ $timer.Add_Tick({
 })
 $timer.Start()
 $buttonForm.Add_FormClosed({ $keyboard.Close() })
-[System.Windows.Forms.Application]::SetUnhandledExceptionMode([System.Windows.Forms.UnhandledExceptionMode]::CatchException)
-[System.Windows.Forms.Application]::add_ThreadException({
-    param($sender, $eventArgs)
-    try { $eventArgs.Exception.Message | Out-File -FilePath "C:\layouts\keyboard-error.txt" -Append -Encoding utf8 } catch {}
-})
 [System.Windows.Forms.Application]::Run($buttonForm)
 $mutex.ReleaseMutex() | Out-Null
 $mutex.Dispose()
