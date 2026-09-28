@@ -440,17 +440,59 @@ foreach ($item in $opened) {
         if ($script:hostsLeft -le 0) { [System.Windows.Forms.Application]::ExitThread() }
     })
 }
+if (-not ("PanelDesktop" -as [type])) {
+    Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+public static class PanelDesktop {
+    [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
+    public static bool Covers(int x, int y, int w, int h) {
+        int left = GetSystemMetrics(76);
+        int top = GetSystemMetrics(77);
+        int right = left + GetSystemMetrics(78);
+        int bottom = top + GetSystemMetrics(79);
+        return x >= left && y >= top && x + w <= right && y + h <= bottom;
+    }
+}
+'@
+}
+function Test-HostHome($item) {
+    $text = [PanelWin]::RectOf($item.Host)
+    if ($text -eq "unread") { return $false }
+    $parts = @($text -split '[ ,x]')
+    if ($parts.Count -lt 4) { return $false }
+    $dx = [Math]::Abs([int]$parts[0] - $item.X)
+    $dy = [Math]::Abs([int]$parts[1] - $item.Y)
+    $dw = [Math]::Abs([int]$parts[2] - $item.W)
+    $dh = [Math]::Abs([int]$parts[3] - $item.H)
+    return ($dx -le 8) -and ($dy -le 8) -and ($dw -le 8) -and ($dh -le 8)
+}
+function Test-LayoutDesktop {
+    foreach ($item in $opened) {
+        if (-not [PanelDesktop]::Covers($item.X, $item.Y, $item.W, $item.H)) { return $false }
+    }
+    return $true
+}
 $script:fitPasses = 0
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 1000
 $timer.Add_Tick({
     $script:fitPasses += 1
-    foreach ($item in $opened) {
-        if ([PanelWin]::IsWindow($item.Hwnd)) {
-            [void][PanelWin]::Fit($item.Hwnd, $item.Host, $item.X, $item.Y, $item.W, $item.H)
+    # While a monitor is off, Windows parks its windows on a screen that is still on.
+    # Leave them there until every tile is on a connected display again, then put them back.
+    $ready = Test-LayoutDesktop
+    $needsRestore = $false
+    if ($script:fitPasses -gt 3) {
+        if (-not $ready) { return }
+        foreach ($item in $opened) {
+            if (-not (Test-HostHome $item)) { $needsRestore = $true; break }
         }
+        if (-not $needsRestore) { return }
     }
-    if ($script:fitPasses -ge 3) { $timer.Stop() }
+    foreach ($item in $opened) {
+        if (-not [PanelWin]::IsWindow($item.Hwnd)) { continue }
+        if ($needsRestore) { [void][PanelWin]::ShowWindow($item.Host, 9) }
+        [void][PanelWin]::Fit($item.Hwnd, $item.Host, $item.X, $item.Y, $item.W, $item.H)
+    }
 })
 $timer.Start()
 $script:urlBusy = $false
