@@ -376,12 +376,13 @@ $timer.Add_Tick({
             $winW = [Math]::Min($session.Width, $maxW)
             $winH = [Math]::Min($session.Height, $maxH)
         }
-        $contentX = $area.X + [int][Math]::Floor([Math]::Max(0, $maxW - $winW) / 2)
-        $contentY = $area.Y + $barHeight
         $contentW = $winW
         $contentH = $winH
-        if ($form.Left -ne $contentX -or $form.Top -ne $area.Y -or $form.Width -ne $contentW -or $form.Height -ne $barHeight) {
-            $form.Bounds = New-Object System.Drawing.Rectangle $contentX, $area.Y, $contentW, $barHeight
+        $contentX = $area.X + [int][Math]::Floor([Math]::Max(0, $maxW - $contentW) / 2)
+        $pairY = $area.Y + [int][Math]::Floor([Math]::Max(0, $area.Height - ($barHeight + $contentH)) / 2)
+        $contentY = $pairY + $barHeight
+        if ($form.Left -ne $contentX -or $form.Top -ne $pairY -or $form.Width -ne $contentW -or $form.Height -ne $barHeight) {
+            $form.Bounds = New-Object System.Drawing.Rectangle $contentX, $pairY, $contentW, $barHeight
         }
 
         if ($session) {
