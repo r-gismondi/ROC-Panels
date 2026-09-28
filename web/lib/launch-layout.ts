@@ -113,7 +113,7 @@ function queueLaunch(host: string, bat: string) {
 function publishWatcher(host: string) {
   const root = layoutsRoot(host)
   fs.mkdirSync(root, { recursive: true })
-  for (const name of ["Watch-Launch.ps1", "Start-Watch.bat", "Launch-InSession.ps1"]) {
+  for (const name of ["Watch-Launch.ps1", "Start-Watch.bat", "Launch-InSession.ps1", "Capture-Thumbs.ps1", "Start-Thumbs.bat"]) {
     fs.copyFileSync(path.join(scriptsDir(), name), path.join(root, name))
   }
 }
@@ -205,7 +205,7 @@ function readEnvValue(file: string, key: string) {
   }
 }
 
-function layoutAccount() {
+export function layoutAccount() {
   let user = process.env.LAYOUT_USER || ""
   let password = process.env.LAYOUT_PASSWORD || ""
   const configPath = path.join(installRoot(), "pedestal.config.json")

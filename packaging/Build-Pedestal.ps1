@@ -62,7 +62,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $dist "config") | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo "config\panels.json") -Destination (Join-Path $dist "config\panels.json")
 $scripts = Join-Path $dist "scripts"
 New-Item -ItemType Directory -Force -Path $scripts | Out-Null
-foreach ($name in @("Watch-Launch.ps1", "Start-Watch.bat", "Launch-InSession.ps1", "Show-VncSession.ps1", "Show-KeyboardButton.ps1", "Set-ConsoleWindow.ps1")) {
+foreach ($name in @("Watch-Launch.ps1", "Start-Watch.bat", "Launch-InSession.ps1", "Show-VncSession.ps1", "Show-KeyboardButton.ps1", "Set-ConsoleWindow.ps1", "Capture-Thumbs.ps1", "Start-Thumbs.bat")) {
     Copy-Item -LiteralPath (Join-Path $web "scripts\$name") -Destination (Join-Path $scripts $name)
 }
 Copy-Item -LiteralPath (Join-Path $repo "layouts") -Destination (Join-Path $dist "layouts") -Recurse

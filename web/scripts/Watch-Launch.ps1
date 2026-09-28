@@ -14,6 +14,11 @@ try {
 }
 if (-not $owned) { exit 0 }
 
+$thumbs = Join-Path $root "Capture-Thumbs.ps1"
+if (Test-Path -LiteralPath $thumbs) {
+    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", $thumbs -WindowStyle Hidden
+}
+
 $lastBeat = [datetime]::MinValue
 while ($true) {
     $now = Get-Date

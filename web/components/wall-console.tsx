@@ -195,6 +195,13 @@ export function WallConsole() {
     }
   }, [])
 
+  const [thumbStamp, setThumbStamp] = useState(() => Date.now())
+  useEffect(() => {
+    void fetch("/api/thumbs", { method: "POST" })
+    const timer = window.setInterval(() => setThumbStamp(Date.now()), 2500)
+    return () => window.clearInterval(timer)
+  }, [])
+
   useEffect(() => {
     let cancel = false
     void (async () => {
@@ -536,6 +543,7 @@ export function WallConsole() {
           preset={PRESETS[1].find((item) => item.id === preset[1])!}
           selection={selection}
           power={power}
+          thumbStamp={thumbStamp}
           onSelect={setSelection}
           height={controlHeight}
         />
@@ -633,6 +641,7 @@ export function WallConsole() {
               selected={computer2Scope}
               selection={selection}
               power={power}
+              thumbStamp={thumbStamp}
               onSelectFrame={() => setSelection({ panel: 2, screen: "computer-2" })}
               onSelectScreen={(screen) => setSelection({ panel: 2, screen })}
             />
@@ -645,6 +654,7 @@ export function WallConsole() {
               selected={computer3Scope}
               selection={selection}
               power={power}
+              thumbStamp={thumbStamp}
               onSelectFrame={() => setSelection({ panel: 2, screen: "computer-3" })}
               onSelectScreen={(screen) => setSelection({ panel: 2, screen })}
             />
@@ -727,6 +737,7 @@ function PanelFrame({
   preset,
   selection,
   power,
+  thumbStamp,
   onSelect,
   height,
 }: {
@@ -737,6 +748,7 @@ function PanelFrame({
   preset: Preset
   selection: Selection
   power: Record<string, boolean>
+  thumbStamp: number
   onSelect: (selection: Selection) => void
   height?: number
 }) {
@@ -771,31 +783,17 @@ function PanelFrame({
         <div className="flex min-h-0 flex-1 flex-col gap-2">
         {rows.map((row) => (
           <div key={row[0].id} className="grid min-h-0 flex-1 gap-2" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>
-            {row.map((screen) => {
-              const group = preset.groups[screen.id] ?? 0
-              const color = GROUP_COLOR[group % GROUP_COLOR.length]
-              const isSelected = selection.screen === screen.id
-              const on = power[screen.id]
-              return (
-                <button
-                  key={screen.id}
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onSelect({ panel, screen: screen.id })
-                  }}
-                  className="h-full min-h-0 rounded-lg border px-1 py-2 text-center transition"
-                  style={{
-                    borderColor: isSelected ? "#ffffff" : color,
-                    background: on ? `${color}33` : "rgba(0,0,0,0.45)",
-                    boxShadow: isSelected ? `0 0 16px ${color}` : undefined,
-                  }}
-                >
-                  <span className="block text-sm font-semibold">{screen.id.replace("TV", "")}</span>
-                  <span className="block text-[10px] text-cyan-50/80">{screen.hdmi}</span>
-                </button>
-              )
-            })}
+            {row.map((screen) => (
+              <ScreenButton
+                key={screen.id}
+                screen={screen}
+                preset={preset}
+                selected={selection.screen === screen.id}
+                on={power[screen.id]}
+                thumbStamp={thumbStamp}
+                onSelect={() => onSelect({ panel, screen: screen.id })}
+              />
+            ))}
           </div>
         ))}
         </div>
@@ -813,6 +811,7 @@ function ComputerFrame({
   selected,
   selection,
   power,
+  thumbStamp,
   onSelectFrame,
   onSelectScreen,
 }: {
@@ -824,6 +823,7 @@ function ComputerFrame({
   selected: boolean
   selection: Selection
   power: Record<string, boolean>
+  thumbStamp: number
   onSelectFrame: () => void
   onSelectScreen: (screen: string) => void
 }) {
@@ -847,6 +847,7 @@ function ComputerFrame({
                 preset={preset}
                 selected={selection.screen === screen.id}
                 on={power[screen.id]}
+                thumbStamp={thumbStamp}
                 onSelect={() => onSelectScreen(screen.id)}
               />
             ))}
@@ -857,21 +858,36 @@ function ComputerFrame({
   )
 }
 
+function ScreenThumb({ id, stamp, dim }: { id: string; stamp: number; dim: boolean }) {
+  const [src, setSrc] = useState("")
+  useEffect(() => {
+    const next = `/api/thumbs/${id}?v=${stamp}`
+    const probe = new Image()
+    probe.onload = () => setSrc(next)
+    probe.src = next
+  }, [id, stamp])
+  if (!src) return null
+  return <img src={src} alt="" className={`absolute inset-0 h-full w-full object-cover ${dim ? "opacity-40" : ""}`} />
+}
+
 function ScreenButton({
   screen,
   preset,
   selected,
   on,
+  thumbStamp,
   onSelect,
 }: {
   screen: Screen
   preset: Preset
   selected: boolean
   on: boolean
+  thumbStamp: number
   onSelect: () => void
 }) {
   const group = preset.groups[screen.id] ?? 0
   const color = GROUP_COLOR[group % GROUP_COLOR.length]
+  const number = screen.id.replace("TV", "")
   return (
     <button
       type="button"
@@ -879,15 +895,18 @@ function ScreenButton({
         event.stopPropagation()
         onSelect()
       }}
-      className="h-full min-h-0 rounded-lg border px-1 py-2 text-center transition"
+      className="relative h-full min-h-0 overflow-hidden rounded-lg border text-center transition"
       style={{
         borderColor: selected ? "#ffffff" : color,
         background: on ? `${color}33` : "rgba(0,0,0,0.45)",
         boxShadow: selected ? `0 0 16px ${color}` : undefined,
       }}
     >
-      <span className="block text-sm font-semibold">{screen.id.replace("TV", "")}</span>
-      <span className="block text-[10px] text-cyan-50/80">{screen.hdmi}</span>
+      <ScreenThumb id={screen.id} stamp={thumbStamp} dim={!on} />
+      <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/35 to-transparent px-1 pt-3 pb-1">
+        <span className="block text-sm font-semibold leading-tight">{number}</span>
+        <span className="block text-[10px] leading-tight text-cyan-50/90">{screen.hdmi}</span>
+      </span>
     </button>
   )
 }
