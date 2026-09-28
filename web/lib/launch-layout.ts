@@ -1,4 +1,5 @@
 import { execFile, spawn } from "child_process"
+import crypto from "crypto"
 import { promisify } from "util"
 import fs from "fs"
 import os from "os"
@@ -68,7 +69,7 @@ $ErrorActionPreference = 'Continue'
 $HostName = ${psString(host)}
 $User = ${psString(user)}
 $Pass = ${psString(password)}
-$task = 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\\layouts\\Watch-Launch.ps1'
+$task = 'cmd.exe /c C:\\layouts\\Start-Watch.bat'
 & schtasks.exe /Create /S $HostName /U $User /P $Pass /SC ONLOGON /RL HIGHEST /TN WallLayoutWatch /TR $task /F | Out-Null
 exit 0
 `
@@ -108,6 +109,35 @@ function queueLaunch(host: string, bat: string) {
   const file = path.join(dir, `${Date.now()}-${process.pid}.txt`)
   fs.writeFileSync(`${file}.tmp`, bat, "ascii")
   fs.renameSync(`${file}.tmp`, file)
+  return file
+}
+
+function fileHash(file: string) {
+  return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex")
+}
+
+function watcherIdentity() {
+  const launch = fileHash(path.join(scriptsDir(), "Watch-Launch.ps1"))
+  const start = fileHash(path.join(scriptsDir(), "Start-Watch.bat"))
+  return `${launch} ${start}`
+}
+
+function watcherIsCurrent(host: string) {
+  try {
+    const text = fs.readFileSync(path.join(layoutsRoot(host), "watcher-script.txt"), "utf8").trim().toLowerCase()
+    return text === watcherIdentity()
+  } catch {
+    return false
+  }
+}
+
+async function waitUntilGone(file: string, timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (!fs.existsSync(file)) return true
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  return !fs.existsSync(file)
 }
 
 function publishWatcher(host: string) {
@@ -119,11 +149,11 @@ function publishWatcher(host: string) {
 }
 
 function startLocalWatcher() {
-  const child = spawn(
-    "powershell.exe",
-    ["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", "C:\\layouts\\Watch-Launch.ps1"],
-    { detached: true, stdio: "ignore", windowsHide: true },
-  )
+  const child = spawn("cmd.exe", ["/c", "C:\\layouts\\Start-Watch.bat"], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  })
   child.unref()
 }
 
@@ -154,11 +184,12 @@ exit 0
 }
 
 async function ensureWatcher(host: string, user: string, password: string) {
-  if (await watcherFresh(host)) {
+  if (watcherIsCurrent(host) && (await watcherFresh(host))) {
     scheduleRemoteLogon(host, user, password)
     return
   }
   publishWatcher(host)
+  watcherReadyUntil.delete(host)
   if (machineIs(host)) {
     try {
       await execFileAsync(
@@ -172,7 +203,7 @@ async function ensureWatcher(host: string, user: string, password: string) {
           "/TN",
           "WallLayoutWatch",
           "/TR",
-          "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\\layouts\\Watch-Launch.ps1",
+          "cmd.exe /c C:\\layouts\\Start-Watch.bat",
           "/F",
         ],
         { windowsHide: true, timeout: 15000 },
@@ -186,7 +217,7 @@ async function ensureWatcher(host: string, user: string, password: string) {
   }
   const deadline = Date.now() + (machineIs(host) ? 8000 : 20000)
   while (Date.now() < deadline) {
-    if (await watcherFresh(host)) {
+    if (watcherIsCurrent(host) && (await watcherFresh(host))) {
       scheduleRemoteLogon(host, user, password)
       return
     }
@@ -266,9 +297,17 @@ export async function launchLayout(computer: string, preset: string): Promise<La
   if (!password) return { ok: false, message: "Set layoutPassword in pedestal.config.json, then start the console again." }
 
   try {
-    const known = (watcherReadyUntil.get(command.host) ?? 0) > Date.now()
+    const known = (watcherReadyUntil.get(command.host) ?? 0) > Date.now() && watcherIsCurrent(command.host)
     if (known) void watcherFresh(command.host).catch(() => watcherReadyUntil.delete(command.host))
     else await ensureWatcher(command.host, user, password)
+    if (preset !== "close") {
+      const close = layoutCommand(computer, "close")
+      if (!close) return { ok: false, message: "That preset is not on this computer." }
+      const ticket = queueLaunch(command.host, close.path)
+      const closed = await waitUntilGone(ticket, 20000)
+      if (!closed) return { ok: false, message: `Edge on ${command.host} did not close.` }
+      await new Promise((resolve) => setTimeout(resolve, 700))
+    }
     queueLaunch(command.host, command.path)
     rememberLayout(computer, preset)
     const message = command.label === "Close" ? `Closed Edge on ${command.host}.` : `Opened ${command.label} on ${command.host}.`

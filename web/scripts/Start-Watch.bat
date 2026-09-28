@@ -1,2 +1,3 @@
 @echo off
+powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like '*Watch-Launch.ps1*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; $deadline = (Get-Date).AddSeconds(5); do { $left = @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like '*Watch-Launch.ps1*' }); if ($left.Count -eq 0) { break }; Start-Sleep -Milliseconds 100 } while ((Get-Date) -lt $deadline)"
 start "" powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\layouts\Watch-Launch.ps1
