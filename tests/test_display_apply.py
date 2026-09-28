@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import socket
 import threading
+import time
 import unittest
 
 from samsung_controller.apply import main, run
@@ -18,8 +19,9 @@ def _packet(command: int, display_id: int, data: bytes, ack: bool = True) -> byt
 
 
 class SetPanel(threading.Thread):
-    def __init__(self) -> None:
+    def __init__(self, answer_id: int = 0) -> None:
         super().__init__(daemon=True)
+        self.answer_id = answer_id
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server.bind(("127.0.0.1", 0))
@@ -58,7 +60,7 @@ class SetPanel(threading.Thread):
                         self.packets.append(packet)
                         command = packet[1]
                         display_id = packet[2]
-                        if display_id != 0:
+                        if display_id != self.answer_id:
                             continue
                         if length == 0:
                             data = {0x00: bytes([0x01]), 0x11: bytes([0x01]), 0x58: bytes([70])}.get(command, b"")
@@ -117,6 +119,24 @@ class DisplayApplyTest(unittest.TestCase):
             self.assertTrue(row["power"])
             self.assertEqual(row["brightness"], 70)
             self.assertTrue(all(packet[3] == 0 for packet in panel.packets))
+        finally:
+            panel.close()
+            panel.join(timeout=2)
+
+    def test_panel_number_is_used_without_waiting_on_silent_ids(self) -> None:
+        panel = SetPanel(answer_id=1)
+        panel.start()
+        network = PanelNetwork("127.0.0", 0, panel.port)
+        try:
+            started = time.perf_counter()
+            result = run({"action": "set", "screens": ["TV1"], "power": True}, network, timeout=2)
+            elapsed = time.perf_counter() - started
+            self.assertTrue(result["results"][0]["ok"])
+            self.assertLess(elapsed, 1.0)
+            self.assertTrue(panel.packets)
+            self.assertTrue(all(packet[2] == 1 for packet in panel.packets))
+            self.assertEqual(panel.packets[0][1], 0x11)
+            self.assertEqual(panel.packets[0][3], 1)
         finally:
             panel.close()
             panel.join(timeout=2)

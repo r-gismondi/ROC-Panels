@@ -11,7 +11,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from samsung_controller.client import PanelError, ReadOnlyMdcClient, _connect_error, _discover_id
+from samsung_controller.client import PanelError, ReadOnlyMdcClient, _connect_error
 from samsung_controller.config import PanelNetwork, load_config
 
 SCREEN_COUNT = 18
@@ -31,7 +31,7 @@ def screen_number(value: object) -> int:
     return number
 
 
-def run(request: dict, network: PanelNetwork | None = None, timeout: float = 3.0) -> dict:
+def run(request: dict, network: PanelNetwork | None = None, timeout: float = 1.0) -> dict:
     if not isinstance(request, dict):
         raise ValueError("request must be an object")
     action = request.get("action")
@@ -74,9 +74,12 @@ def run(request: dict, network: PanelNetwork | None = None, timeout: float = 3.0
 def _display_ids(network: PanelNetwork, panel: int) -> list[int]:
     if network.display_id is not None:
         return [network.display_id]
-    display_ids = [0, 1]
-    if panel not in display_ids:
-        display_ids.append(panel)
+    # These panels answer on their own number. Id 0 and id 1 stay silent, so
+    # trying them first waits out the socket timeout before the command is sent.
+    display_ids: list[int] = []
+    for display_id in (panel, 0, 1):
+        if display_id not in display_ids:
+            display_ids.append(display_id)
     return display_ids
 
 
@@ -96,17 +99,37 @@ def _one(
     except OSError as exc:
         return {"screen": screen, "ok": False, "error": _connect_error(exc)}
     try:
-        found = _discover_id(client, _display_ids(network, panel))
-        if found is None:
-            return {"screen": screen, "ok": False, "error": "The display did not answer."}
-        display_id, _status = found
-        if action == "read":
-            return _read(client, screen, display_id)
-        return _write(client, screen, display_id, power, brightness)
-    except PanelError as exc:
-        return {"screen": screen, "ok": False, "error": str(exc) or "The display did not answer."}
+        return _command(client, screen, _display_ids(network, panel), action, power, brightness)
     finally:
         client.close()
+
+
+def _command(
+    client: ReadOnlyMdcClient,
+    screen: str,
+    display_ids: list[int],
+    action: str,
+    power: bool | None,
+    brightness: int | None,
+) -> dict:
+    last_error = "The display did not answer."
+    for index, display_id in enumerate(display_ids):
+        try:
+            if action == "read":
+                result = _read(client, screen, display_id)
+            else:
+                result = _write(client, screen, display_id, power, brightness)
+        except PanelError as exc:
+            last_error = str(exc) or last_error
+            if index + 1 == len(display_ids):
+                break
+            try:
+                client.connect()
+            except OSError as connect_exc:
+                return {"screen": screen, "ok": False, "error": _connect_error(connect_exc)}
+            continue
+        return result
+    return {"screen": screen, "ok": False, "error": last_error}
 
 
 def _exchange(client: ReadOnlyMdcClient, kind: str, name: str, display_id: int, value: int | None = None) -> dict:
@@ -119,7 +142,10 @@ def _exchange(client: ReadOnlyMdcClient, kind: str, name: str, display_id: int, 
 
     try:
         return once()
-    except PanelError:
+    except PanelError as exc:
+        # A silent id should fail once. Retry only when the panel closes the socket.
+        if "timed out" in str(exc).lower():
+            raise
         client.connect()
         return once()
 

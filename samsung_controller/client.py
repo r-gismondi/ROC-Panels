@@ -38,6 +38,7 @@ class ReadOnlyMdcClient:
     def connect(self) -> None:
         self.close()
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         sock.settimeout(self.timeout)
         try:
             sock.connect((self.host, self.port))
@@ -131,8 +132,8 @@ class ReadOnlyMdcClient:
         assert sock is not None
         try:
             chunk = sock.recv(256)
-        except TimeoutError:
-            return None
+        except TimeoutError as exc:
+            raise PanelError("timed out") from exc
         if not chunk:
             return None
         return chunk

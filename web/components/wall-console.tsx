@@ -315,7 +315,7 @@ export function WallConsole() {
     if (brightnessTimer.current) clearTimeout(brightnessTimer.current)
     brightnessTimer.current = setTimeout(() => {
       void sendBrightness(screens, level, previous)
-    }, 300)
+    }, 80)
   }
 
   async function sendBrightness(screens: string[], level: number, previous: Record<string, number>) {
