@@ -1,6 +1,6 @@
 import { execFile } from "child_process"
-import path from "path"
 import { promisify } from "util"
+import { installRoot } from "@/lib/install-root"
 
 const execFileAsync = promisify(execFile)
 
@@ -14,21 +14,25 @@ export type DisplayRow = {
 
 type ApplyResponse = { results?: DisplayRow[]; error?: string }
 
-function repoRoot() {
-  const cwd = process.cwd().replace(/\\/g, "/")
-  return cwd.endsWith("/web") ? path.resolve(process.cwd(), "..") : process.cwd()
-}
-
 async function python(payload: unknown) {
-  const cwd = repoRoot()
-  const args = ["-m", "samsung_controller.apply", JSON.stringify(payload)]
+  const cwd = installRoot()
+  const moduleArgs = ["-m", "samsung_controller.apply", JSON.stringify(payload)]
   const options = { cwd, timeout: 40000, windowsHide: true, maxBuffer: 1024 * 1024 }
+  const bundled = process.env.ROC_PYTHON
+  if (bundled) {
+    try {
+      return await execFileAsync(bundled, moduleArgs, options)
+    } catch (error) {
+      const failed = error as { code?: string }
+      if (failed.code !== "ENOENT") throw error
+    }
+  }
   try {
-    return await execFileAsync("py", ["-3", ...args], options)
+    return await execFileAsync("py", ["-3", ...moduleArgs], options)
   } catch (error) {
     const failed = error as { code?: string }
     if (failed.code !== "ENOENT") throw error
-    return execFileAsync("python", args, options)
+    return execFileAsync("python", moduleArgs, options)
   }
 }
 

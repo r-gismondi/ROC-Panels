@@ -3,6 +3,7 @@ import { promisify } from "util"
 import fs from "fs"
 import os from "os"
 import path from "path"
+import { installRoot } from "@/lib/install-root"
 
 const execFileAsync = promisify(execFile)
 
@@ -113,7 +114,7 @@ function publishWatcher(host: string) {
   const root = layoutsRoot(host)
   fs.mkdirSync(root, { recursive: true })
   for (const name of ["Watch-Launch.ps1", "Start-Watch.bat", "Launch-InSession.ps1"]) {
-    fs.copyFileSync(path.join(process.cwd(), "scripts", name), path.join(root, name))
+    fs.copyFileSync(path.join(installRoot(), "scripts", name), path.join(root, name))
   }
 }
 
@@ -324,7 +325,7 @@ export function openVnc(computer: string): LaunchResult {
   if (!fs.existsSync(viewerPath) || !fs.existsSync(shortcut)) {
     return { ok: false, message: `The VNC shortcut for ${host} was not found.` }
   }
-  const sessionScript = path.join(process.cwd(), "scripts", "Show-VncSession.ps1")
+  const sessionScript = path.join(installRoot(), "scripts", "Show-VncSession.ps1")
   const session = spawn(
     "powershell.exe",
     ["-NoProfile", "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", sessionScript, "-ComputerName", name, "-Address", host],
@@ -333,7 +334,7 @@ export function openVnc(computer: string): LaunchResult {
   session.stdout.resume()
   session.stderr.resume()
   session.unref()
-  const button = path.join(process.cwd(), "scripts", "Show-KeyboardButton.ps1")
+  const button = path.join(installRoot(), "scripts", "Show-KeyboardButton.ps1")
   const keyboard = spawn(
     "powershell.exe",
     ["-NoProfile", "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", button],
