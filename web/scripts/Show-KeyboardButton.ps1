@@ -333,11 +333,11 @@ function Move-Drag {
     $cursor = [System.Windows.Forms.Cursor]::Position
     $x = $script:dragOrigin.X + ($cursor.X - $script:dragCursor.X)
     $y = $script:dragOrigin.Y + ($cursor.Y - $script:dragCursor.Y)
-    $home = [System.Windows.Forms.Screen]::FromPoint($cursor).WorkingArea
-    $minX = $home.Left - $keyboard.Width + 160
-    $maxX = $home.Right - 160
-    $minY = $home.Top
-    $maxY = $home.Bottom - 44
+    $workArea = [System.Windows.Forms.Screen]::FromPoint($cursor).WorkingArea
+    $minX = $workArea.Left - $keyboard.Width + 160
+    $maxX = $workArea.Right - 160
+    $minY = $workArea.Top
+    $maxY = $workArea.Bottom - 44
     if ($x -lt $minX) { $x = $minX }
     if ($x -gt $maxX) { $x = $maxX }
     if ($y -lt $minY) { $y = $minY }
@@ -440,9 +440,9 @@ function Move-Resize {
         if ($script:resizeCorner -in @("ne", "nw")) { $y -= (300 - $h) }
         $h = 300
     }
-    $home = [System.Windows.Forms.Screen]::FromPoint($cursor).WorkingArea
-    if ($w -gt $home.Width) { $w = $home.Width }
-    if ($h -gt ($home.Height - 24)) { $h = $home.Height - 24 }
+    $workArea = [System.Windows.Forms.Screen]::FromPoint($cursor).WorkingArea
+    if ($w -gt $workArea.Width) { $w = $workArea.Width }
+    if ($h -gt ($workArea.Height - 24)) { $h = $workArea.Height - 24 }
     $keyboard.Bounds = New-Object System.Drawing.Rectangle $x, $y, $w, $h
 }
 function New-Corner([string]$corner) {
@@ -504,6 +504,11 @@ $timer.Add_Tick({
 })
 $timer.Start()
 $buttonForm.Add_FormClosed({ $keyboard.Close() })
+[System.Windows.Forms.Application]::SetUnhandledExceptionMode([System.Windows.Forms.UnhandledExceptionMode]::CatchException)
+[System.Windows.Forms.Application]::add_ThreadException({
+    param($sender, $eventArgs)
+    try { $eventArgs.Exception.Message | Out-File -FilePath "C:\layouts\keyboard-error.txt" -Append -Encoding utf8 } catch {}
+})
 [System.Windows.Forms.Application]::Run($buttonForm)
 $mutex.ReleaseMutex() | Out-Null
 $mutex.Dispose()
