@@ -157,9 +157,17 @@ public static class VncHostWin {
             SetWindowPos(hwnd, new IntPtr(-1), x, y, w, h, SWP_SHOWWINDOW | SWP_FRAMECHANGED);
             return;
         }
-        KeepOffTaskbar(hwnd);
         if (IsIconic(hwnd)) ShowWindow(hwnd, 9);
-        SetWindowPos(hwnd, new IntPtr(-1), x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        if (!IsAt(hwnd, x, y, w, h)) {
+            SetWindowPos(hwnd, new IntPtr(-1), x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        }
+    }
+
+    public static bool IsAt(IntPtr hwnd, int x, int y, int w, int h) {
+        if (!IsWindow(hwnd) || IsIconic(hwnd)) return false;
+        RECT rect;
+        GetWindowRect(hwnd, out rect);
+        return rect.Left == x && rect.Top == y && (rect.Right - rect.Left) == w && (rect.Bottom - rect.Top) == h;
     }
 
     public static void Raise(IntPtr hwnd) {
@@ -353,7 +361,6 @@ $timer.Add_Tick({
             if ($parts.Count -eq 2) { Switch-Target $parts[0].Trim() $parts[1].Trim() }
         }
 
-        $form.TopMost = $true
         $rows = @(Get-VncWindows)
         $splashTitle = "$($script:Address) - RealVNC Viewer"
         $candidates = @($rows | Where-Object { $_.Title -like "*$($script:Address)*" -and $_.Title -ne "RealVNC Viewer" })
@@ -398,24 +405,14 @@ $timer.Add_Tick({
         }
 
         foreach ($row in $rows) {
-            if ($row.Title -eq "RealVNC Viewer" -and $row.Hwnd -ne $script:sessionHwnd) {
+            if ($row.Title -eq "RealVNC Viewer" -and $row.Visible -and $row.Hwnd -ne $script:sessionHwnd) {
                 [VncHostWin]::HideWindow($row.Hwnd)
-            }
-            if ($session -and $row.Hwnd -eq $session.Hwnd) {
-                [VncHostWin]::KeepOffTaskbar($row.Hwnd)
             }
         }
         $dialogs = @($rows | Where-Object {
             $_.Visible -and $_.Title -ne "RealVNC Viewer" -and $_.Title -notlike "*$($script:Address)*"
         })
         foreach ($dialog in $dialogs) { [VncHostWin]::Raise($dialog.Hwnd) }
-        [VncHostWin]::Raise($backdrop.Handle)
-        if ($session) { [VncHostWin]::Raise($session.Hwnd) }
-        [VncHostWin]::Raise($form.Handle)
-        foreach ($keyboardTitle in @("Keyboard", "VNC Keyboard")) {
-            $keyboard = [VncHostWin]::FindTitle($keyboardTitle)
-            if ($keyboard -ne [IntPtr]::Zero) { [VncHostWin]::Raise($keyboard) }
-        }
     } catch {
         $title.Text = "Could not open $($script:Name). Close to return."
     }

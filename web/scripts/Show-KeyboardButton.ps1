@@ -289,8 +289,62 @@ $keyboard.BackColor = $panelBg
 $keyboard.Text = "VNC Keyboard"
 $keyboard.Visible = $false
 $keyboard.Add_HandleCreated({ [VncKeyboardWin]::NoActivate($keyboard.Handle) })
-$keyboardHeight = 430
+$keyboardHeight = 474
 $keyboard.Bounds = New-Object System.Drawing.Rectangle $area.X, ($area.Bottom - $keyboardHeight), $area.Width, $keyboardHeight
+
+$dragBar = New-Object System.Windows.Forms.Panel
+$dragBar.Dock = [System.Windows.Forms.DockStyle]::Top
+$dragBar.Height = 44
+$dragBar.BackColor = [System.Drawing.Color]::FromArgb(7, 26, 77)
+$dragBar.Cursor = [System.Windows.Forms.Cursors]::SizeAll
+$keyboard.Controls.Add($dragBar)
+
+$dragLabel = New-Object System.Windows.Forms.Label
+$dragLabel.Dock = [System.Windows.Forms.DockStyle]::Fill
+$dragLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
+$dragLabel.Padding = New-Object System.Windows.Forms.Padding 16, 0, 0, 0
+$dragLabel.ForeColor = $cyan
+$dragLabel.BackColor = $dragBar.BackColor
+$dragLabel.Font = New-Object System.Drawing.Font "Segoe UI", 12
+$dragLabel.Text = "Drag to move"
+$dragLabel.Cursor = [System.Windows.Forms.Cursors]::SizeAll
+$dragBar.Controls.Add($dragLabel)
+
+$script:dragging = $false
+$script:dragCursor = $null
+$script:dragOrigin = $null
+function Start-Drag {
+    $script:dragging = $true
+    $script:dragCursor = [System.Windows.Forms.Cursor]::Position
+    $script:dragOrigin = $keyboard.Location
+    $dragBar.Capture = $true
+}
+function Move-Drag {
+    if (-not $script:dragging) { return }
+    $cursor = [System.Windows.Forms.Cursor]::Position
+    $x = $script:dragOrigin.X + ($cursor.X - $script:dragCursor.X)
+    $y = $script:dragOrigin.Y + ($cursor.Y - $script:dragCursor.Y)
+    $home = [System.Windows.Forms.Screen]::FromPoint($cursor).WorkingArea
+    $minX = $home.Left - $keyboard.Width + 160
+    $maxX = $home.Right - 160
+    $minY = $home.Top
+    $maxY = $home.Bottom - 44
+    if ($x -lt $minX) { $x = $minX }
+    if ($x -gt $maxX) { $x = $maxX }
+    if ($y -lt $minY) { $y = $minY }
+    if ($y -gt $maxY) { $y = $maxY }
+    $keyboard.Location = New-Object System.Drawing.Point $x, $y
+}
+function Stop-Drag {
+    $script:dragging = $false
+    $dragBar.Capture = $false
+}
+$dragBar.Add_MouseDown({ if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Start-Drag } })
+$dragBar.Add_MouseMove({ Move-Drag })
+$dragBar.Add_MouseUp({ Stop-Drag })
+$dragLabel.Add_MouseDown({ if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Start-Drag } })
+$dragLabel.Add_MouseMove({ Move-Drag })
+$dragLabel.Add_MouseUp({ Stop-Drag })
 
 $accent = New-Object System.Windows.Forms.Panel
 $accent.Dock = [System.Windows.Forms.DockStyle]::Top
@@ -309,7 +363,7 @@ for ($rowIndex = 0; $rowIndex -lt 6; $rowIndex++) {
     [void]$table.RowStyles.Add((New-Object System.Windows.Forms.RowStyle ([System.Windows.Forms.SizeType]::Percent, 16.6)))
 }
 $keyboard.Controls.Add($table)
-$accent.BringToFront()
+$table.SendToBack()
 
 Add-KeyRow $table 0 @("1", "2", "3", "4", "5", "6", "7", "8", "9", "0") 18 $false
 Add-KeyRow $table 1 @("q", "w", "e", "r", "t", "y", "u", "i", "o", "p") 18 $true
@@ -322,21 +376,23 @@ $actions.Dock = [System.Windows.Forms.DockStyle]::Fill
 $actions.Margin = New-Object System.Windows.Forms.Padding 0
 $actions.BackColor = $panelBg
 $actions.RowCount = 1
-$actions.ColumnCount = 5
+$actions.ColumnCount = 6
 [void]$actions.RowStyles.Add((New-Object System.Windows.Forms.RowStyle ([System.Windows.Forms.SizeType]::Percent, 100)))
-foreach ($width in @(16, 36, 16, 16, 16)) {
+foreach ($width in @(14, 14, 30, 14, 14, 14)) {
     [void]$actions.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle ([System.Windows.Forms.SizeType]::Percent, $width)))
 }
-$shiftButton = New-Key "Shift" { $script:shift = -not $script:shift; Update-ShiftLabels } 16
-$spaceButton = New-Key "Space" { [VncKeyboardWin]::Tap([uint16]0x20, $false) } 16
-$backButton = New-Key "Backspace" { [VncKeyboardWin]::Tap([uint16]0x08, $false) } 16
-$enterButton = New-Key "Enter" { [VncKeyboardWin]::Tap([uint16]0x0D, $false) } 16
-$hideButton = New-Key "Hide keyboard" { $keyboard.Hide() } 14
-$actions.Controls.Add($shiftButton, 0, 0)
-$actions.Controls.Add($spaceButton, 1, 0)
-$actions.Controls.Add($backButton, 2, 0)
-$actions.Controls.Add($enterButton, 3, 0)
-$actions.Controls.Add($hideButton, 4, 0)
+$windowsButton = New-Key "Windows" { [VncKeyboardWin]::Tap([uint16]0x5B, $false) } 14
+$shiftButton = New-Key "Shift" { $script:shift = -not $script:shift; Update-ShiftLabels } 14
+$spaceButton = New-Key "Space" { [VncKeyboardWin]::Tap([uint16]0x20, $false) } 14
+$backButton = New-Key "Backspace" { [VncKeyboardWin]::Tap([uint16]0x08, $false) } 13
+$enterButton = New-Key "Enter" { [VncKeyboardWin]::Tap([uint16]0x0D, $false) } 14
+$hideButton = New-Key "Hide keyboard" { $keyboard.Hide() } 12
+$actions.Controls.Add($windowsButton, 0, 0)
+$actions.Controls.Add($shiftButton, 1, 0)
+$actions.Controls.Add($spaceButton, 2, 0)
+$actions.Controls.Add($backButton, 3, 0)
+$actions.Controls.Add($enterButton, 4, 0)
+$actions.Controls.Add($hideButton, 5, 0)
 $table.Controls.Add($actions, 0, 5)
 
 function Show-KeyboardPanel {
@@ -355,12 +411,6 @@ $openedAt = Get-Date
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 1000
 $timer.Add_Tick({
-    $buttonForm.TopMost = $false
-    $buttonForm.TopMost = $true
-    if ($keyboard.Visible) {
-        $keyboard.TopMost = $false
-        $keyboard.TopMost = $true
-    }
     if (((Get-Date) - $openedAt).TotalSeconds -lt 8) { return }
     if (-not (Get-Process -Name vncviewer -ErrorAction SilentlyContinue)) {
         $keyboard.Hide()
