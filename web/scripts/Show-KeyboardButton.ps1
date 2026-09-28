@@ -266,7 +266,8 @@ $buttonForm.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $buttonForm.ShowInTaskbar = $false
 $buttonForm.TopMost = $true
 $buttonForm.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
-$buttonForm.BackColor = [System.Drawing.Color]::FromArgb(8, 47, 140)
+$buttonForm.BackColor = [System.Drawing.Color]::FromArgb(88, 88, 92)
+$buttonForm.Opacity = 0.46
 $buttonForm.Size = New-Object System.Drawing.Size 112, 112
 $buttonForm.Text = "Keyboard"
 $buttonForm.Add_HandleCreated({ [VncKeyboardWin]::NoActivate($buttonForm.Handle) })
@@ -277,10 +278,13 @@ $icon.Dock = [System.Windows.Forms.DockStyle]::Fill
 $icon.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $icon.FlatAppearance.BorderSize = 0
 $icon.Font = New-Object System.Drawing.Font "Segoe UI Symbol", 36
-$icon.ForeColor = [System.Drawing.Color]::White
-$icon.BackColor = [System.Drawing.Color]::FromArgb(8, 47, 140)
+$icon.ForeColor = [System.Drawing.Color]::FromArgb(214, 214, 216)
+$icon.BackColor = [System.Drawing.Color]::FromArgb(88, 88, 92)
+$icon.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(110, 110, 114)
+$icon.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(128, 128, 132)
 $icon.Text = [string]([char]0x2328)
 $icon.TabStop = $false
+$icon.Cursor = [System.Windows.Forms.Cursors]::SizeAll
 $buttonForm.Controls.Add($icon)
 $margin = 24
 $buttonForm.Location = New-Object System.Drawing.Point ($area.Right - $buttonForm.Width - $margin), ($area.Bottom - $buttonForm.Height - $margin)
@@ -536,7 +540,43 @@ function Show-KeyboardPanel {
     Update-KeyboardLayout
 }
 
+$script:iconDown = $false
+$script:iconMoved = $false
+$script:iconCursor = $null
+$script:iconOrigin = $null
+function Move-KeyboardIcon {
+    if (-not $script:iconDown) { return }
+    $cursor = [System.Windows.Forms.Cursor]::Position
+    $dx = $cursor.X - $script:iconCursor.X
+    $dy = $cursor.Y - $script:iconCursor.Y
+    if (-not $script:iconMoved -and [Math]::Abs($dx) -lt 8 -and [Math]::Abs($dy) -lt 8) { return }
+    $script:iconMoved = $true
+    $x = $script:iconOrigin.X + $dx
+    $y = $script:iconOrigin.Y + $dy
+    $workArea = [System.Windows.Forms.Screen]::FromPoint($cursor).WorkingArea
+    $maxX = $workArea.Right - $buttonForm.Width
+    $maxY = $workArea.Bottom - $buttonForm.Height
+    if ($x -lt $workArea.Left) { $x = $workArea.Left }
+    if ($y -lt $workArea.Top) { $y = $workArea.Top }
+    if ($x -gt $maxX) { $x = $maxX }
+    if ($y -gt $maxY) { $y = $maxY }
+    $buttonForm.Location = New-Object System.Drawing.Point $x, $y
+}
+$icon.Add_MouseDown({
+    if ($_.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
+    $script:iconDown = $true
+    $script:iconMoved = $false
+    $script:iconCursor = [System.Windows.Forms.Cursor]::Position
+    $script:iconOrigin = $buttonForm.Location
+    $icon.Capture = $true
+})
+$icon.Add_MouseMove({ Move-KeyboardIcon })
 $icon.Add_MouseUp({
+    if ($_.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
+    $dragged = $script:iconMoved
+    $script:iconDown = $false
+    $icon.Capture = $false
+    if ($dragged) { return }
     if ($keyboard.Visible) { $keyboard.Hide() } else { Show-KeyboardPanel }
 })
 
