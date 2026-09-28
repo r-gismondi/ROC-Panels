@@ -238,7 +238,7 @@ function Start-Viewer {
         "-FullScreen=0",
         "-Scaling=Fit",
         $script:Address
-    ) -WorkingDirectory (Split-Path -Parent $viewerPath) -WindowStyle Hidden
+    ) -WorkingDirectory (Split-Path -Parent $viewerPath) -WindowStyle Normal
     $script:startedAt = Get-Date
 }
 
@@ -286,17 +286,6 @@ $blue = [System.Drawing.Color]::FromArgb(8, 47, 140)
 $cyan = [System.Drawing.Color]::FromArgb(125, 211, 252)
 $barHeight = 84
 
-$backdrop = New-Object System.Windows.Forms.Form
-$backdrop.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
-$backdrop.ShowInTaskbar = $false
-$backdrop.TopMost = $true
-$backdrop.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
-$backdrop.BackColor = [System.Drawing.Color]::Black
-$backdrop.Bounds = $area
-$backdrop.Text = "VNC backdrop"
-$backdrop.Add_HandleCreated({ [VncHostWin]::KeepOffTaskbar($backdrop.Handle) })
-$backdrop.Show()
-
 $form = New-Object System.Windows.Forms.Form
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $form.ShowInTaskbar = $false
@@ -306,13 +295,22 @@ $form.BackColor = $navy
 $form.ForeColor = [System.Drawing.Color]::White
 $form.Bounds = New-Object System.Drawing.Rectangle $area.X, $area.Y, $area.Width, $barHeight
 $form.Text = "VNC session"
-$form.Owner = $backdrop
 
 $accent = New-Object System.Windows.Forms.Panel
 $accent.Dock = [System.Windows.Forms.DockStyle]::Bottom
 $accent.Height = 3
 $accent.BackColor = $cyan
 $form.Controls.Add($accent)
+
+$title = New-Object System.Windows.Forms.Label
+$title.Dock = [System.Windows.Forms.DockStyle]::Fill
+$title.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
+$title.Padding = New-Object System.Windows.Forms.Padding 28, 0, 12, 0
+$title.BackColor = $navy
+$title.ForeColor = [System.Drawing.Color]::White
+$title.Font = New-Object System.Drawing.Font "Segoe UI", 22
+$title.Text = "Connecting to $Name…"
+$form.Controls.Add($title)
 
 $close = New-Object System.Windows.Forms.Button
 $close.Dock = [System.Windows.Forms.DockStyle]::Right
@@ -326,21 +324,13 @@ $close.Font = New-Object System.Drawing.Font "Segoe UI", 20
 $close.Text = "Close"
 $close.TabStop = $false
 $form.Controls.Add($close)
-
-$title = New-Object System.Windows.Forms.Label
-$title.Dock = [System.Windows.Forms.DockStyle]::Fill
-$title.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
-$title.Padding = New-Object System.Windows.Forms.Padding 28, 0, 12, 0
-$title.BackColor = $navy
-$title.ForeColor = [System.Drawing.Color]::White
-$title.Font = New-Object System.Drawing.Font "Segoe UI", 22
-$title.Text = "Connecting to $Name…"
-$form.Controls.Add($title)
+$close.BringToFront()
 
 $close.Add_Click({
     $script:leaving = $true
-    $timer.Stop()
-    Close-Viewer
+    try { $timer.Stop() } catch {}
+    $form.Hide()
+    try { Close-Viewer } catch {}
     $form.Close()
 })
 
@@ -350,7 +340,6 @@ $form.Add_FormClosing({
         Close-Viewer
     }
     if (Test-Path -LiteralPath $requestPath) { Remove-Item -LiteralPath $requestPath -Force -ErrorAction SilentlyContinue }
-    try { $backdrop.Close() } catch {}
 })
 
 $timer = New-Object System.Windows.Forms.Timer
@@ -415,7 +404,7 @@ $timer.Add_Tick({
         }
 
         foreach ($row in $rows) {
-            if ($row.Title -eq "RealVNC Viewer" -and $row.Visible -and $row.Hwnd -ne $script:sessionHwnd) {
+            if ($script:seenSession -and $row.Title -eq "RealVNC Viewer" -and $row.Visible -and $row.Hwnd -ne $script:sessionHwnd) {
                 [VncHostWin]::HideWindow($row.Hwnd)
             }
         }
