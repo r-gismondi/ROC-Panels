@@ -22,7 +22,20 @@ try {
 } catch {}
 
 $thumbs = Join-Path $root "Capture-Thumbs.ps1"
-if (Test-Path -LiteralPath $thumbs) {
+$thumbAlive = Join-Path $root "thumbs\alive.txt"
+$script:lastThumbCheck = [datetime]::MinValue
+function Start-ThumbCapture {
+    $now = Get-Date
+    if (($now - $script:lastThumbCheck).TotalSeconds -lt 5) { return }
+    $script:lastThumbCheck = $now
+    if (-not (Test-Path -LiteralPath $thumbs)) { return }
+    if (Test-Path -LiteralPath $thumbAlive) {
+        try {
+            $text = (Get-Content -LiteralPath $thumbAlive -Raw -ErrorAction Stop).Trim()
+            $beat = [datetimeoffset]::Parse($text)
+            if (([datetimeoffset]::Now - $beat).TotalSeconds -lt 5) { return }
+        } catch {}
+    }
     Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", $thumbs -WindowStyle Hidden
 }
 
@@ -35,8 +48,10 @@ function Update-Beat {
     }
 }
 
+Start-ThumbCapture
 while ($true) {
     Update-Beat
+    Start-ThumbCapture
     $items = @(Get-ChildItem -LiteralPath $queue -Filter *.txt -ErrorAction SilentlyContinue | Sort-Object Name)
     foreach ($item in $items) {
         $bat = ""

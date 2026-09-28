@@ -301,6 +301,8 @@ function Stop-LayoutConsoles {
         $_.Name -match '^(cmd|powershell|pwsh)\.exe$' -and
         $_.CommandLine -and
         $_.CommandLine -notlike '*Watch-Launch.ps1*' -and
+        $_.CommandLine -notlike '*Capture-Thumbs.ps1*' -and
+        $_.CommandLine -notlike '*Start-Thumbs.bat*' -and
         ($_.CommandLine -like '*\layouts\*' -or $_.CommandLine -like '*Show-Edge.ps1*')
     })
     foreach ($proc in $procs) {
