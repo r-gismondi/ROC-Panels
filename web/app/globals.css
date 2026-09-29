@@ -128,3 +128,120 @@
     @apply font-sans;
   }
 }
+
+.coach-chip {
+  left: 4%;
+  top: 64%;
+  animation: coach-chip 3.8s ease-in-out infinite;
+}
+
+.coach-cursor {
+  left: 28%;
+  top: 42%;
+  animation: coach-cursor 3.8s ease-in-out infinite;
+}
+
+.coach-cursor::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 4px;
+  height: 10px;
+  width: 10px;
+  border-radius: 9999px;
+  border: 2px solid rgba(190, 240, 255, 0.9);
+  opacity: 0;
+  animation: coach-press 3.8s ease-out infinite;
+}
+
+.coach-hot {
+  animation: coach-hot 3.8s ease-in-out infinite;
+}
+
+@keyframes coach-chip {
+  0%,
+  16% {
+    left: 4%;
+    top: 64%;
+    transform: scale(1);
+  }
+  24% {
+    left: 4%;
+    top: 66%;
+    transform: scale(0.96);
+  }
+  68%,
+  80% {
+    left: 46%;
+    top: 8%;
+    transform: scale(1);
+  }
+  92%,
+  100% {
+    left: 4%;
+    top: 64%;
+    transform: scale(1);
+  }
+}
+
+@keyframes coach-cursor {
+  0% {
+    left: 28%;
+    top: 42%;
+    transform: scale(1);
+  }
+  16%,
+  24% {
+    left: 12%;
+    top: 68%;
+    transform: scale(0.92);
+  }
+  68%,
+  80% {
+    left: 54%;
+    top: 16%;
+    transform: scale(1);
+  }
+  100% {
+    left: 28%;
+    top: 42%;
+    transform: scale(1);
+  }
+}
+
+@keyframes coach-press {
+  0%,
+  18%,
+  36%,
+  100% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  26% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+}
+
+@keyframes coach-hot {
+  0%,
+  64%,
+  100% {
+    border-color: color-mix(in srgb, #67e8f9 40%, transparent);
+    box-shadow: none;
+  }
+  74%,
+  86% {
+    border-color: #ffffff;
+    box-shadow: 0 0 16px rgba(126, 232, 255, 0.9);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .coach-chip,
+  .coach-cursor,
+  .coach-cursor::after,
+  .coach-hot {
+    animation: none;
+  }
+}
