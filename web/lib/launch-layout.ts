@@ -146,6 +146,23 @@ async function waitUntilGone(file: string, timeoutMs: number) {
   return !fs.existsSync(file)
 }
 
+function publishLayoutScript(host: string, computer: string) {
+  const source = path.join(installRoot(), "layouts", `computer-${computer}`, "Show-Edge.ps1")
+  if (!fs.existsSync(source)) return
+  const destDir = path.join(layoutsRoot(host), `computer-${computer}`)
+  const dest = path.join(destDir, "Show-Edge.ps1")
+  const next = fs.readFileSync(source)
+  try {
+    if (fs.readFileSync(dest).equals(next)) return
+  } catch {
+    // The computer does not have this layout script yet.
+  }
+  fs.mkdirSync(destDir, { recursive: true })
+  const temporary = `${dest}.${process.pid}.tmp`
+  fs.writeFileSync(temporary, next)
+  fs.renameSync(temporary, dest)
+}
+
 function publishWatcher(host: string) {
   const root = layoutsRoot(host)
   fs.mkdirSync(root, { recursive: true })
@@ -275,15 +292,6 @@ function rememberLayout(computer: string, preset: string) {
   fs.renameSync(temporary, file)
 }
 
-function layoutIsFresh(computer: string) {
-  try {
-    const age = Date.now() - fs.statSync(layoutStateFile(computer)).mtimeMs
-    return age >= 0 && age < 120000
-  } catch {
-    return false
-  }
-}
-
 export function readLayoutState() {
   const layouts: Record<string, string> = { "101": "", "102": "", "103": "" }
   for (const computer of Object.keys(layouts)) {
@@ -306,6 +314,7 @@ export async function launchLayout(computer: string, preset: string): Promise<La
       message: "Run this page on the touchscreen. Preset buttons launch the Edge layouts from there.",
     }
   }
+  publishLayoutScript(command.host, computer)
   const account = layoutAccount()
   const user = account.user
   const password = account.password
@@ -441,7 +450,8 @@ export async function launchProgram(screen: string, exePath: string, name: strin
   const computer = computerForScreen(screen)
   const host = HOSTS[computer]
   if (!host || !validProgram(exePath)) return { ok: false, message: "Choose a program, then tap a screen." }
-  if (!readLayoutState()[computer]) return { ok: false, message: "Confirm a layout, then open the program." }
+  const layout = readLayoutState()[computer]
+  if (!layout || layout === "close") return { ok: false, message: "Confirm a layout, then open the program." }
   if (process.platform !== "win32") return { ok: false, message: "Run this page on the touchscreen." }
   const remote = sharePath(host, exePath)
   if (!remote) return { ok: false, message: "Choose a program with a local path, such as C:\\Apps\\Board.exe." }
@@ -466,10 +476,7 @@ export async function launchProgram(screen: string, exePath: string, name: strin
   }
   const started = Date.now()
   let sawWorking = false
-  const freshLayout = layoutIsFresh(computer)
-  const deadline = freshLayout ? 75000 : 30000
-  const quietLimit = freshLayout ? deadline : 2500
-  while (Date.now() - started < deadline) {
+  while (Date.now() - started < 20000) {
     await new Promise((resolve) => setTimeout(resolve, 200))
     let text = ""
     try {
@@ -478,9 +485,7 @@ export async function launchProgram(screen: string, exePath: string, name: strin
       text = ""
     }
     if (!text) {
-      if (!sawWorking && Date.now() - started > quietLimit) {
-        return { ok: false, message: freshLayout ? "The program did not open." : "Confirm a layout, then open the program." }
-      }
+      if (!sawWorking && Date.now() - started > 3000) return { ok: false, message: "Confirm the layout, then open the program." }
       continue
     }
     if (text === "working") {

@@ -642,7 +642,11 @@ export function WallConsole() {
     const pin = pins.find((item) => item.id === armedApp)
     if (!pin) return
     const computer = COMPUTER_OF[screenId]
-    if (!computer || layoutBusy.current) return
+    if (!computer) return
+    if (layoutBusy.current) {
+      setProgramStatus("Wait for the layout to finish opening.")
+      return
+    }
     const layoutId = await runningLayout(computer)
     const list = computer === "103" ? COMPUTER_3_PRESETS : computer === "101" ? PRESETS[1] : PRESETS[2]
     const active = list.find((item) => item.id === layoutId)
@@ -650,7 +654,6 @@ export function WallConsole() {
     const group = active?.groups[screenId]
     const zone = active ? ids.filter((id) => active.groups[id] === group) : [screenId]
     const label = zone.length > 1 ? `screens ${zone.map(screenNumber).join(", ")}` : `screen ${screenNumber(screenId)}`
-    layoutBusy.current = true
     const opening = `Opening ${pin.name} on ${label}…`
     setProgramStatus(opening)
     setLayoutStatus(opening)
@@ -675,8 +678,6 @@ export function WallConsole() {
       const note = "Could not reach the layout service."
       setProgramStatus(note)
       setLayoutStatus(note)
-    } finally {
-      layoutBusy.current = false
     }
   }
 
@@ -849,7 +850,7 @@ export function WallConsole() {
               {IDS[2].every((id) => power[id]) ? "ON" : IDS[2].every((id) => !power[id]) ? "OFF" : "MIXED"}
             </span>
           </div>
-          <div className="grid min-h-0 flex-1 items-stretch gap-2 lg:grid-cols-5">
+          <div className="grid min-h-0 flex-1 items-stretch gap-4 lg:grid-cols-5">
             <ComputerFrame
               className="lg:col-span-4"
               rows={COMPUTER_2}
@@ -1083,7 +1084,7 @@ function ComputerFrame({
         event.stopPropagation()
         onSelectFrame()
       }}
-      className={`flex h-full min-h-0 min-w-0 flex-col rounded-xl border p-2 ${className} ${selected ? "border-white bg-white/5" : "border-cyan-300/35"}`}
+      className={`flex h-full min-h-0 min-w-0 flex-col rounded-xl border p-4 ${className} ${selected ? "border-white bg-white/5" : "border-cyan-300/35"}`}
     >
       <div className="flex min-h-0 flex-1 flex-col gap-2">
         {rows.map((row) => (
