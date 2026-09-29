@@ -69,6 +69,46 @@ public static class RocBrowse {
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc lpEnumFunc, IntPtr lParam);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
   [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+  [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+  [DllImport("user32.dll")] public static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
+  [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int idHook, CbtProc lpfn, IntPtr hMod, uint dwThreadId);
+  [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hhk);
+  [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+  public delegate IntPtr CbtProc(int code, IntPtr wParam, IntPtr lParam);
+  const int WH_CBT = 5;
+  const int HCBT_ACTIVATE = 5;
+  const int GWL_EXSTYLE = -20;
+  const int WS_EX_LAYERED = 0x00080000;
+  const uint LWA_ALPHA = 0x2;
+  static CbtProc cbtKeep;
+  static IntPtr cbtHook;
+  public static void WatchDialog() {
+    cbtKeep = (code, wParam, lParam) => {
+      if (code == HCBT_ACTIVATE) {
+        var text = new StringBuilder(512);
+        GetWindowText(wParam, text, text.Capacity);
+        if (text.ToString() == "Choose a program") BeginFade(wParam);
+      }
+      return CallNextHookEx(cbtHook, code, wParam, lParam);
+    };
+    cbtHook = SetWindowsHookEx(WH_CBT, cbtKeep, IntPtr.Zero, GetCurrentThreadId());
+  }
+  public static void EndWatch() {
+    if (cbtHook == IntPtr.Zero) return;
+    UnhookWindowsHookEx(cbtHook);
+    cbtHook = IntPtr.Zero;
+  }
+  public static void BeginFade(IntPtr hwnd) {
+    if (hwnd == IntPtr.Zero) return;
+    int ex = GetWindowLong(hwnd, GWL_EXSTYLE);
+    SetWindowLong(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+    SetLayeredWindowAttributes(hwnd, 0, 0, LWA_ALPHA);
+  }
+  public static void SetAlpha(IntPtr hwnd, byte alpha) {
+    if (hwnd == IntPtr.Zero) return;
+    SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
+  }
   public static IntPtr FindTitle(string title) {
     found = IntPtr.Zero;
     uint pid = (uint)Process.GetCurrentProcess().Id;
@@ -120,25 +160,36 @@ $dialog = New-Object System.Windows.Forms.OpenFileDialog
 $dialog.Filter = 'Programs (*.exe;*.lnk)|*.exe;*.lnk'
 $dialog.Title = 'Choose a program'
 $dialog.CheckFileExists = $true
-$state = @{ tries = 0 }
+$state = @{ tries = 0; alpha = 0; hwnd = [IntPtr]::Zero; focused = $false }
 $timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 80
+$timer.Interval = 16
 $onTick = {
   $state.tries++
-  $hwnd = [RocBrowse]::FindTitle('Choose a program')
-  if ($hwnd -ne [IntPtr]::Zero) {
-    [RocBrowse]::Focus($hwnd)
-    if ([RocBrowse]::GetForegroundWindow() -eq $hwnd) { $timer.Stop() }
+  if ($state.hwnd -eq [IntPtr]::Zero) { $state.hwnd = [RocBrowse]::FindTitle('Choose a program') }
+  if ($state.hwnd -ne [IntPtr]::Zero) {
+    if (-not $state.focused) {
+      [RocBrowse]::Focus($state.hwnd)
+      if ([RocBrowse]::GetForegroundWindow() -eq $state.hwnd) { $state.focused = $true }
+    }
+    if ($state.alpha -lt 255) {
+      $state.alpha = [Math]::Min(255, $state.alpha + 28)
+      [RocBrowse]::SetAlpha($state.hwnd, [byte]$state.alpha)
+    }
   }
-  if ($state.tries -ge 25) { $timer.Stop() }
+  if (($state.focused -and $state.alpha -ge 255) -or $state.tries -ge 90) {
+    if ($state.hwnd -ne [IntPtr]::Zero) { [RocBrowse]::SetAlpha($state.hwnd, 255) }
+    $timer.Stop()
+  }
 }.GetNewClosure()
 $timer.add_Tick($onTick)
+[RocBrowse]::WatchDialog()
 $timer.Start()
 try {
   $result = $dialog.ShowDialog($owner)
 } finally {
   $timer.Stop()
   $timer.Dispose()
+  [RocBrowse]::EndWatch()
   $owner.Close()
   $owner.Dispose()
 }
