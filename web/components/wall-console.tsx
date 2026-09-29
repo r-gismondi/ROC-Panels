@@ -852,7 +852,7 @@ export function WallConsole() {
           </div>
           <div
             className="flex min-h-0 w-full flex-1 items-stretch justify-center gap-2 [container-type:inline-size]"
-            style={{ ["--pad" as string]: "3rem", ["--seam" as string]: "2px", ["--tile" as string]: "max(0px, calc((100cqi - 4 * var(--pad) - 0.5rem - 3 * var(--seam)) / 5))" }}
+            style={{ ["--pad" as string]: "1.25rem", ["--seam" as string]: "4px", ["--tile" as string]: "max(0px, calc((100cqi - 4 * var(--pad) - 0.5rem - 3 * var(--seam)) / 5))" }}
           >
             <ComputerFrame
               className="h-full shrink-0"
@@ -1115,38 +1115,26 @@ function ScreenWall({
 }) {
   const columns = rows.reduce((count, row) => Math.max(count, row.length), 1)
   const rowCount = rows.length
-  const width = columns * 16
-  const height = rowCount * 9
   return (
-    <div className="relative min-h-0 w-full flex-1">
-      <div className="absolute inset-0 p-12 [container-type:size]">
-        <div
-          className="grid gap-0.5"
-          style={{
-            width: `min(100cqw, calc(100cqh * ${width} / ${height}))`,
-            height: `min(100cqh, calc(100cqw * ${height} / ${width}))`,
-            gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-            gridTemplateRows: `repeat(${rowCount}, minmax(0, 1fr))`,
-            position: "absolute",
-            left: "50%",
-            top: "50%",
-            transform: "translate(-50%, -50%)",
-          }}
-        >
-          {rows.flat().map((screen) => (
-            <ScreenButton
-              key={screen.id}
-              screen={screen}
-              preset={preset}
-              selected={selection.screen === screen.id}
-              on={power[screen.id]}
-              thumbStamp={thumbStamp}
-              onSelect={() => onSelect(screen.id)}
-              onOpenRemote={() => onOpenRemote(screen.id)}
-            />
-          ))}
-        </div>
-      </div>
+    <div
+      className="grid min-h-0 w-full flex-1 gap-1 p-5"
+      style={{
+        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+        gridTemplateRows: `repeat(${rowCount}, minmax(0, 1fr))`,
+      }}
+    >
+      {rows.flat().map((screen) => (
+        <ScreenButton
+          key={screen.id}
+          screen={screen}
+          preset={preset}
+          selected={selection.screen === screen.id}
+          on={power[screen.id]}
+          thumbStamp={thumbStamp}
+          onSelect={() => onSelect(screen.id)}
+          onOpenRemote={() => onOpenRemote(screen.id)}
+        />
+      ))}
     </div>
   )
 }
