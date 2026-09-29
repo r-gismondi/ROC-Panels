@@ -1,6 +1,8 @@
 "use client"
 
-import { useEffect, useRef, useState, type CSSProperties } from "react"
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react"
+import { DragCoach } from "@/components/drag-coach"
+import { Reveal, StatusLine, usePresence } from "@/components/presence"
 import { Slider } from "@/components/ui/slider"
 
 type PanelId = 1 | 2
@@ -165,8 +167,13 @@ export function WallConsole() {
   const [keyboardOpen, setKeyboardOpen] = useState(false)
   const [replaceAddress, setReplaceAddress] = useState(false)
   const layoutBusy = useRef(false)
+  const launchLock = useRef(false)
   const brightnessTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const controlRef = useRef<HTMLDivElement>(null)
+  const screenHold = useRef<Screen | undefined>(undefined)
+  const coachHold = useRef<PinnedApp | null>(null)
+  const dragSession = useRef<{ pointerId: number; id: string; x: number; y: number; dragging: boolean } | null>(null)
+  const [drag, setDrag] = useState<{ id: string; x: number; y: number; over: string } | null>(null)
   const [controlHeight, setControlHeight] = useState<number>()
 
   useEffect(() => {
@@ -311,6 +318,10 @@ export function WallConsole() {
   const computer2Preset = presetById(PRESETS[2], preset[2], "focus")
   const activeComputer3Preset = presetById(COMPUTER_3_PRESETS, computer3Preset, "independent")
   const current = SCREENS.find((screen) => screen.id === selection.screen)
+  if (current) screenHold.current = current
+  const addressPresence = usePresence(Boolean(current))
+  const addressScreen = current ?? (addressPresence.mounted ? screenHold.current : undefined)
+  const keyboardPresence = usePresence(Boolean(keyboardOpen && addressScreen))
   const scopeLabel =
     selection.screen === "all" ? "WHOLE PANEL" : selection.screen === "computer-2" || selection.screen === "computer-3" ? "SCREENS" : "ONE SCREEN"
   const scopeTitle =
@@ -521,7 +532,7 @@ export function WallConsole() {
     }
   }
 
-  const addressComputer = current ? COMPUTER_OF[current.id] : null
+  const addressComputer = addressScreen ? COMPUTER_OF[addressScreen.id] : null
   const addressPreset =
     addressComputer === "103"
       ? presetById(COMPUTER_3_PRESETS, computer3Applied, "independent")
@@ -529,9 +540,9 @@ export function WallConsole() {
         ? presetById(PRESETS[1], applied[1], "focus")
         : presetById(PRESETS[2], applied[2], "focus")
   const addressIds = addressComputer === "103" ? COMPUTER_3_IDS : addressComputer === "101" ? IDS[1] : COMPUTER_2_IDS
-  const zoneIds = current ? addressIds.filter((id) => addressPreset.groups[id] === addressPreset.groups[current.id]) : []
-  const shownZone = zoneIds.length > 0 ? zoneIds : current ? [current.id] : []
-  const addressValue = current ? addresses[current.id] ?? DEFAULT_URL : DEFAULT_URL
+  const zoneIds = addressScreen ? addressIds.filter((id) => addressPreset.groups[id] === addressPreset.groups[addressScreen.id]) : []
+  const shownZone = zoneIds.length > 0 ? zoneIds : addressScreen ? [addressScreen.id] : []
+  const addressValue = addressScreen ? addresses[addressScreen.id] ?? DEFAULT_URL : DEFAULT_URL
   const previewPending = footer.activeId !== "" && footer.activeId !== footer.appliedId
 
   function insertAddress(token: string) {
@@ -609,7 +620,7 @@ export function WallConsole() {
 
   function choose(next: Selection) {
     setSelection(next)
-    if (/^TV\d+$/.test(next.screen)) void openArmedProgram(next.screen)
+    if (/^TV\d+$/.test(next.screen) && armedApp) void openProgram(armedApp, next.screen)
   }
 
   function rememberApplied(computer: "101" | "102" | "103", id: string) {
@@ -638,15 +649,16 @@ export function WallConsole() {
     }
   }
 
-  async function openArmedProgram(screenId: string) {
-    const pin = pins.find((item) => item.id === armedApp)
+  async function openProgram(pinId: string, screenId: string) {
+    const pin = pins.find((item) => item.id === pinId)
     if (!pin) return
     const computer = COMPUTER_OF[screenId]
     if (!computer) return
-    if (layoutBusy.current) {
+    if (launchLock.current || layoutBusy.current) {
       setProgramStatus("Wait for the layout to finish opening.")
       return
     }
+    launchLock.current = true
     const layoutId = await runningLayout(computer)
     const list = computer === "103" ? COMPUTER_3_PRESETS : computer === "101" ? PRESETS[1] : PRESETS[2]
     const active = list.find((item) => item.id === layoutId)
@@ -678,6 +690,56 @@ export function WallConsole() {
       const note = "Could not reach the layout service."
       setProgramStatus(note)
       setLayoutStatus(note)
+    } finally {
+      launchLock.current = false
+    }
+  }
+
+  function screenUnder(x: number, y: number) {
+    for (const hit of document.elementsFromPoint(x, y)) {
+      const tile = hit.closest("[data-screen-id]")
+      if (tile) return tile.getAttribute("data-screen-id") ?? ""
+    }
+    return ""
+  }
+
+  function programPointer(pinId: string) {
+    return {
+      onPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+        if (event.button !== 0) return
+        event.preventDefault()
+        dragSession.current = { pointerId: event.pointerId, id: pinId, x: event.clientX, y: event.clientY, dragging: false }
+        event.currentTarget.setPointerCapture(event.pointerId)
+      },
+      onPointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
+        const session = dragSession.current
+        if (!session || session.pointerId !== event.pointerId) return
+        const dx = event.clientX - session.x
+        const dy = event.clientY - session.y
+        if (!session.dragging && dx * dx + dy * dy < 36) return
+        session.dragging = true
+        setDrag({ id: session.id, x: event.clientX, y: event.clientY, over: screenUnder(event.clientX, event.clientY) })
+      },
+      onPointerUp(event: ReactPointerEvent<HTMLButtonElement>) {
+        const session = dragSession.current
+        if (!session || session.pointerId !== event.pointerId) return
+        dragSession.current = null
+        if (!session.dragging) {
+          setProgramStatus("")
+          setArmedApp((currentId) => (currentId === pinId ? "" : pinId))
+          setDrag(null)
+          return
+        }
+        const screenId = screenUnder(event.clientX, event.clientY)
+        setDrag(null)
+        if (!screenId) return
+        setSelection({ panel: COMPUTER_OF[screenId] === "101" ? 1 : 2, screen: screenId })
+        void openProgram(pinId, screenId)
+      },
+      onPointerCancel() {
+        dragSession.current = null
+        setDrag(null)
+      },
     }
   }
 
@@ -699,7 +761,7 @@ export function WallConsole() {
       }
       setPins(body.pins)
       if (body.selectedId) setArmedApp(body.selectedId)
-      setLayoutStatus(body.canceled ? "No program was added." : "Tap a screen. The program replaces that layout group.")
+      setLayoutStatus(body.canceled ? "No program was added." : "Tap a screen, or drag the program onto it.")
     } catch {
       setLayoutStatus("Could not reach the layout service.")
     } finally {
@@ -721,6 +783,10 @@ export function WallConsole() {
       setLayoutStatus("Could not reach the layout service.")
     }
   }
+
+  const armedPin = pins.find((pin) => pin.id === armedApp) ?? null
+  if (armedPin) coachHold.current = armedPin
+  const coachPin = armedPin ?? coachHold.current
 
   return (
     <main className="flex min-h-svh flex-col bg-[radial-gradient(circle_at_top,#1650c8_0%,#06215f_42%,#03102e_100%)] text-white">
@@ -764,6 +830,7 @@ export function WallConsole() {
           thumbStamp={thumbStamp}
           onSelect={choose}
           onOpenRemote={openRemote}
+          dropTarget={drag?.over ?? ""}
           height={controlHeight}
         />
 
@@ -801,11 +868,11 @@ export function WallConsole() {
               <p className={`text-xs leading-5 text-cyan-100/80 ${current ? "invisible" : ""}`} aria-hidden={Boolean(current)}>
                 Tap one screen to type its address.
               </p>
-              <p className="line-clamp-2 min-h-10 text-xs leading-5 text-cyan-100">{layoutStatus}</p>
+              <StatusLine text={layoutStatus} className="line-clamp-2 min-h-10 text-xs leading-5 text-cyan-100" />
             </div>
 
-            {current ? (
-              <div className="flex flex-col gap-2 border-t border-cyan-300/25 pt-4">
+            {addressPresence.mounted && addressScreen ? (
+              <div className={`flex flex-col gap-2 border-t border-cyan-300/25 pt-4 transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none ${addressPresence.visible ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"}`}>
                 <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">ADDRESS</p>
                 <button
                   type="button"
@@ -866,6 +933,7 @@ export function WallConsole() {
               onSelectFrame={() => setSelection({ panel: 2, screen: "computer-2" })}
               onSelectScreen={(screen) => choose({ panel: 2, screen })}
               onOpenRemote={openRemote}
+              dropTarget={drag?.over ?? ""}
             />
             <ComputerFrame
               className="h-full shrink-0"
@@ -879,6 +947,7 @@ export function WallConsole() {
               onSelectFrame={() => setSelection({ panel: 2, screen: "computer-3" })}
               onSelectScreen={(screen) => choose({ panel: 2, screen })}
               onOpenRemote={openRemote}
+              dropTarget={drag?.over ?? ""}
             />
           </div>
         </section>
@@ -928,57 +997,80 @@ export function WallConsole() {
         />
       </footer>
       <section className="border-t border-cyan-300/30 px-4 py-3 sm:px-6">
-        <div className="mb-2">
-          <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">PROGRAMS</p>
-          <p className="text-xs text-cyan-100/80">
-            {programStatus
-              ? programStatus
-              : armedApp
-                ? "Tap a screen. The program replaces that layout group. Use Independent for one screen."
-                : "Browse for a program, then tap a screen."}
-          </p>
-        </div>
-        <div className="flex items-stretch gap-2 overflow-x-auto pb-1">
-          <GlowButton active={browseBusy} onClick={() => void browseProgram()}>
-            {browseBusy ? "Opening…" : "Browse"}
-          </GlowButton>
-          {pins.map((pin) => (
-            <div key={pin.id} className="flex shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  setProgramStatus("")
-                  setArmedApp((currentId) => (currentId === pin.id ? "" : pin.id))
-                }}
-                className={`flex min-h-11 max-w-56 items-center gap-2 rounded-l-lg border border-r-0 px-3 text-sm tracking-wide ${
-                  armedApp === pin.id
-                    ? "border-cyan-200 bg-cyan-400/25 shadow-[0_0_16px_rgba(80,200,255,0.35)]"
-                    : "border-cyan-300/35 bg-[#08245f]/80"
-                }`}
-              >
-                <ProgramIcon id={pin.id} />
-                <span className="min-w-0 truncate">{pin.name}</span>
-              </button>
-              <button
-                type="button"
-                aria-label={`Remove ${pin.name}`}
-                onClick={() => void removeProgram(pin.id)}
-                className={`min-h-11 rounded-r-lg border px-3 text-sm ${
-                  armedApp === pin.id ? "border-cyan-200 bg-cyan-400/25" : "border-cyan-300/35 bg-[#08245f]/80"
-                }`}
-              >
-                ×
-              </button>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch">
+          <div className="min-w-0 flex-1">
+            <div className="mb-2">
+              <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">PROGRAMS</p>
+              <StatusLine
+                text={
+                  programStatus
+                    ? programStatus
+                    : armedApp
+                      ? "Tap a screen, or drag the program onto it. The program replaces that layout group. Use Independent for one screen."
+                      : "Browse for a program, then tap a screen or drag it onto one."
+                }
+                className="text-xs text-cyan-100/80"
+              />
             </div>
-          ))}
+            <div className="flex items-stretch gap-2 overflow-x-auto pb-1">
+              <GlowButton active={browseBusy} onClick={() => void browseProgram()}>
+                {browseBusy ? "Opening…" : "Browse"}
+              </GlowButton>
+              {pins.map((pin) => (
+                <div key={pin.id} className="flex shrink-0">
+                  <button
+                    type="button"
+                    {...programPointer(pin.id)}
+                    className={`flex min-h-11 max-w-56 cursor-grab touch-none items-center gap-2 rounded-l-lg border border-r-0 px-3 text-sm tracking-wide select-none active:cursor-grabbing ${
+                      armedApp === pin.id
+                        ? "border-cyan-200 bg-cyan-400/25 shadow-[0_0_16px_rgba(80,200,255,0.35)]"
+                        : "border-cyan-300/35 bg-[#08245f]/80"
+                    }`}
+                  >
+                    <ProgramIcon id={pin.id} />
+                    <span className="min-w-0 truncate">{pin.name}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${pin.name}`}
+                    onClick={() => void removeProgram(pin.id)}
+                    className={`min-h-11 rounded-r-lg border px-3 text-sm ${
+                      armedApp === pin.id ? "border-cyan-200 bg-cyan-400/25" : "border-cyan-300/35 bg-[#08245f]/80"
+                    }`}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+          <Reveal show={Boolean(armedPin) && !drag} className="w-full shrink-0 lg:w-[min(46%,34rem)]">
+            {coachPin ? <DragCoach name={coachPin.name} id={coachPin.id} /> : null}
+          </Reveal>
         </div>
       </section>
-      {keyboardOpen && current ? (
+      {drag
+        ? (() => {
+            const pin = pins.find((item) => item.id === drag.id)
+            if (!pin) return null
+            return (
+              <div
+                className="pointer-events-none fixed z-50 flex max-w-56 -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-lg border border-cyan-200 bg-cyan-400/30 px-3 py-2 text-sm shadow-[0_12px_30px_rgba(0,0,0,0.45)]"
+                style={{ left: drag.x, top: drag.y }}
+              >
+                <ProgramIcon id={pin.id} />
+                <span className="truncate">{pin.name}</span>
+              </div>
+            )
+          })()
+        : null}
+      {keyboardPresence.mounted && addressScreen ? (
         <AddressKeyboard
-          label={`Screen ${screenNumber(current.id)}`}
+          label={`Screen ${screenNumber(addressScreen.id)}`}
           value={addressValue}
           selected={replaceAddress}
           detail={zoneDetail(shownZone)}
+          motionClass={keyboardPresence.visible ? "translate-y-0 opacity-100" : "translate-y-8 opacity-0"}
           onInsert={insertAddress}
           onScheme={insertScheme}
           onBackspace={backspaceAddress}
@@ -1002,6 +1094,7 @@ function PanelFrame({
   thumbStamp,
   onSelect,
   onOpenRemote,
+  dropTarget,
   height,
 }: {
   panel: PanelId
@@ -1014,6 +1107,7 @@ function PanelFrame({
   thumbStamp: number
   onSelect: (selection: Selection) => void
   onOpenRemote: (screenId: string) => void
+  dropTarget: string
   height?: number
 }) {
   const ids = rows.flat().map((screen) => screen.id)
@@ -1044,6 +1138,7 @@ function PanelFrame({
         thumbStamp={thumbStamp}
         onSelect={(screen) => onSelect({ panel, screen })}
         onOpenRemote={onOpenRemote}
+        dropTarget={dropTarget}
       />
     </section>
   )
@@ -1061,6 +1156,7 @@ function ComputerFrame({
   onSelectFrame,
   onSelectScreen,
   onOpenRemote,
+  dropTarget,
 }: {
   className?: string
   style?: CSSProperties
@@ -1073,6 +1169,7 @@ function ComputerFrame({
   onSelectFrame: () => void
   onSelectScreen: (screen: string) => void
   onOpenRemote: (screenId: string) => void
+  dropTarget: string
 }) {
   return (
     <div
@@ -1091,6 +1188,7 @@ function ComputerFrame({
         thumbStamp={thumbStamp}
         onSelect={onSelectScreen}
         onOpenRemote={onOpenRemote}
+        dropTarget={dropTarget}
       />
     </div>
   )
@@ -1104,6 +1202,7 @@ function ScreenWall({
   thumbStamp,
   onSelect,
   onOpenRemote,
+  dropTarget,
 }: {
   rows: Screen[][]
   preset: Preset
@@ -1112,6 +1211,7 @@ function ScreenWall({
   thumbStamp: number
   onSelect: (screenId: string) => void
   onOpenRemote: (screenId: string) => void
+  dropTarget: string
 }) {
   const columns = rows.reduce((count, row) => Math.max(count, row.length), 1)
   const rowCount = rows.length
@@ -1133,6 +1233,7 @@ function ScreenWall({
           thumbStamp={thumbStamp}
           onSelect={() => onSelect(screen.id)}
           onOpenRemote={() => onOpenRemote(screen.id)}
+          dropTarget={dropTarget}
         />
       ))}
     </div>
@@ -1146,6 +1247,7 @@ function ProgramIcon({ id }: { id: string }) {
     <img
       src={`/api/apps/icon?id=${encodeURIComponent(id)}`}
       alt=""
+      draggable={false}
       className="h-6 w-6 shrink-0"
       onError={() => setHidden(true)}
     />
@@ -1172,6 +1274,7 @@ function ScreenButton({
   thumbStamp,
   onSelect,
   onOpenRemote,
+  dropTarget,
 }: {
   screen: Screen
   preset: Preset
@@ -1180,13 +1283,16 @@ function ScreenButton({
   thumbStamp: number
   onSelect: () => void
   onOpenRemote: () => void
+  dropTarget: string
 }) {
   const group = preset.groups[screen.id] ?? 0
   const color = GROUP_COLOR[group % GROUP_COLOR.length]
   const number = screen.id.replace("TV", "")
+  const hot = dropTarget === screen.id
   return (
     <button
       type="button"
+      data-screen-id={screen.id}
       onClick={(event) => {
         event.stopPropagation()
         onSelect()
@@ -1195,11 +1301,11 @@ function ScreenButton({
         event.stopPropagation()
         onOpenRemote()
       }}
-      className="relative h-full min-h-0 overflow-hidden rounded-sm border text-center transition"
+      className="relative h-full min-h-0 overflow-hidden rounded-sm border text-center transition-[border-color,box-shadow,background-color] duration-200"
       style={{
-        borderColor: selected ? "#ffffff" : color,
+        borderColor: hot || selected ? "#ffffff" : color,
         background: on ? `${color}33` : "rgba(0,0,0,0.45)",
-        boxShadow: selected ? `0 0 16px ${color}` : undefined,
+        boxShadow: hot ? "0 0 18px #7ee8ff" : selected ? `0 0 16px ${color}` : undefined,
       }}
     >
       <ScreenThumb id={screen.id} stamp={thumbStamp} dim={!on} />
@@ -1255,8 +1361,8 @@ function PresetRow({
           </GlowButton>
         ))}
       </div>
-      {pending ? (
-        <div className="mt-2 grid max-w-md grid-cols-2 gap-2">
+      <Reveal show={pending} motion="down" className="mt-2">
+        <div className="grid max-w-md grid-cols-2 gap-2">
           <GlowButton active onClick={onConfirm}>
             Confirm
           </GlowButton>
@@ -1264,7 +1370,7 @@ function PresetRow({
             Cancel
           </GlowButton>
         </div>
-      ) : null}
+      </Reveal>
     </div>
   )
 }
@@ -1287,6 +1393,7 @@ function AddressKeyboard({
   onClear,
   onOpen,
   onClose,
+  motionClass,
 }: {
   label: string
   value: string
@@ -1298,10 +1405,11 @@ function AddressKeyboard({
   onClear: () => void
   onOpen: () => void
   onClose: () => void
+  motionClass: string
 }) {
   const shortcuts = ["https://", "www.", "/", ":", ".com", "?", "&", "=", "#", "%"]
   return (
-    <div className="fixed inset-x-0 bottom-0 z-40 max-h-[70vh] overflow-y-auto border-t border-cyan-300/40 bg-[#03102e]/95 p-3 shadow-[0_-12px_40px_rgba(0,0,0,0.45)] select-none">
+    <div className={`fixed inset-x-0 bottom-0 z-40 max-h-[70vh] overflow-y-auto border-t border-cyan-300/40 bg-[#03102e]/95 p-3 shadow-[0_-12px_40px_rgba(0,0,0,0.45)] transition-[opacity,transform] duration-300 ease-out select-none motion-reduce:transition-none ${motionClass}`}>
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-2">
         <div className="flex items-baseline justify-between gap-3">
           <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{label}</p>
