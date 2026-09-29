@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react"
 import { DragCoach } from "@/components/drag-coach"
-import { Reveal, StatusLine, usePresence } from "@/components/presence"
+import { Reveal, StatusLine, motionStyle, usePresence } from "@/components/presence"
 import { Slider } from "@/components/ui/slider"
 
 type PanelId = 1 | 2
@@ -163,6 +163,8 @@ export function WallConsole() {
   const [armedApp, setArmedApp] = useState("")
   const [programStatus, setProgramStatus] = useState("")
   const [browseBusy, setBrowseBusy] = useState(false)
+  const [remoteCue, setRemoteCue] = useState("")
+  const remoteTimer = useRef(0)
   const [addresses, setAddresses] = useState<Record<string, string>>({})
   const [keyboardOpen, setKeyboardOpen] = useState(false)
   const [replaceAddress, setReplaceAddress] = useState(false)
@@ -322,6 +324,8 @@ export function WallConsole() {
   const addressPresence = usePresence(Boolean(current))
   const addressScreen = current ?? (addressPresence.mounted ? screenHold.current : undefined)
   const keyboardPresence = usePresence(Boolean(keyboardOpen && addressScreen))
+  const browsePresence = usePresence(browseBusy)
+  const remotePresence = usePresence(Boolean(remoteCue))
   const scopeLabel =
     selection.screen === "all" ? "WHOLE PANEL" : selection.screen === "computer-2" || selection.screen === "computer-3" ? "SCREENS" : "ONE SCREEN"
   const scopeTitle =
@@ -518,6 +522,9 @@ export function WallConsole() {
   }
 
   async function runVnc(computer: "101" | "102" | "103") {
+    setRemoteCue(`Opening the remote desktop for ${GROUP_LABEL[computer]}…`)
+    window.clearTimeout(remoteTimer.current)
+    remoteTimer.current = window.setTimeout(() => setRemoteCue(""), 1400)
     setLayoutStatus(`Opening the remote desktop for ${GROUP_LABEL[computer]}…`)
     try {
       const response = await fetch("/api/vnc", {
@@ -787,6 +794,7 @@ export function WallConsole() {
   const armedPin = pins.find((pin) => pin.id === armedApp) ?? null
   if (armedPin) coachHold.current = armedPin
   const coachPin = armedPin ?? coachHold.current
+  const coachPresence = usePresence(Boolean(armedPin) && !drag)
 
   return (
     <main className="flex min-h-svh flex-col bg-[radial-gradient(circle_at_top,#1650c8_0%,#06215f_42%,#03102e_100%)] text-white">
@@ -872,7 +880,9 @@ export function WallConsole() {
             </div>
 
             {addressPresence.mounted && addressScreen ? (
-              <div className={`flex flex-col gap-2 border-t border-cyan-300/25 pt-4 transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none ${addressPresence.visible ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"}`}>
+              <div className={`grid ${addressPresence.visible ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`} style={motionStyle}>
+              <div className="overflow-hidden">
+              <div className="flex flex-col gap-2 border-t border-cyan-300/25 pt-4">
                 <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">ADDRESS</p>
                 <button
                   type="button"
@@ -893,6 +903,8 @@ export function WallConsole() {
                 <GlowButton active onClick={() => void runAddress()}>
                   Open address
                 </GlowButton>
+              </div>
+              </div>
               </div>
             ) : null}
           </div>
@@ -1044,9 +1056,14 @@ export function WallConsole() {
               ))}
             </div>
           </div>
-          <Reveal show={Boolean(armedPin) && !drag} className="w-full shrink-0 lg:w-[min(46%,34rem)]">
-            {coachPin ? <DragCoach name={coachPin.name} id={coachPin.id} /> : null}
-          </Reveal>
+          {coachPresence.mounted ? (
+            <div
+              className={`min-w-0 overflow-hidden ${coachPresence.visible ? "w-full max-w-full translate-y-0 scale-100 opacity-100 lg:max-w-[34rem]" : "w-0 max-w-0 translate-y-4 scale-95 opacity-0"}`}
+              style={motionStyle}
+            >
+              {coachPin ? <DragCoach name={coachPin.name} id={coachPin.id} /> : null}
+            </div>
+          ) : null}
         </div>
       </section>
       {drag
@@ -1070,7 +1087,7 @@ export function WallConsole() {
           value={addressValue}
           selected={replaceAddress}
           detail={zoneDetail(shownZone)}
-          motionClass={keyboardPresence.visible ? "translate-y-0 opacity-100" : "translate-y-8 opacity-0"}
+          motionClass={keyboardPresence.visible ? "translate-y-0 opacity-100" : "translate-y-full opacity-0"}
           onInsert={insertAddress}
           onScheme={insertScheme}
           onBackspace={backspaceAddress}
@@ -1078,6 +1095,22 @@ export function WallConsole() {
           onOpen={() => void runAddress()}
           onClose={() => setKeyboardOpen(false)}
         />
+      ) : null}
+      {browsePresence.mounted ? (
+        <div className={`fixed inset-0 z-50 flex items-center justify-center bg-[#03102e]/55 ${browsePresence.visible ? "opacity-100" : "opacity-0"}`} style={motionStyle}>
+          <div className={`w-[min(28rem,92vw)] rounded-2xl border border-cyan-300/80 bg-[#071a4d] px-8 py-7 text-center shadow-[0_0_32px_rgba(80,200,255,0.2)] ${browsePresence.visible ? "translate-y-0 scale-100" : "translate-y-4 scale-95"}`} style={motionStyle}>
+            <p className="text-[11px] tracking-[0.18em] text-cyan-100/70">PROGRAMS</p>
+            <p className="mt-2 text-2xl font-semibold tracking-wide">Choose a program</p>
+          </div>
+        </div>
+      ) : null}
+      {remotePresence.mounted ? (
+        <div className={`fixed inset-0 z-50 flex items-center justify-center bg-[#03102e]/55 ${remotePresence.visible ? "opacity-100" : "opacity-0"}`} style={motionStyle}>
+          <div className={`w-[min(32rem,92vw)] rounded-2xl border border-cyan-300/80 bg-[#071a4d] px-8 py-7 text-center shadow-[0_0_32px_rgba(80,200,255,0.2)] ${remotePresence.visible ? "translate-y-0 scale-100" : "translate-y-4 scale-95"}`} style={motionStyle}>
+            <p className="text-[11px] tracking-[0.18em] text-cyan-100/70">REMOTE DESKTOP</p>
+            <p className="mt-2 text-2xl font-semibold tracking-wide">{remoteCue || "Opening the remote desktop…"}</p>
+          </div>
+        </div>
       ) : null}
     </main>
   )
@@ -1409,7 +1442,7 @@ function AddressKeyboard({
 }) {
   const shortcuts = ["https://", "www.", "/", ":", ".com", "?", "&", "=", "#", "%"]
   return (
-    <div className={`fixed inset-x-0 bottom-0 z-40 max-h-[70vh] overflow-y-auto border-t border-cyan-300/40 bg-[#03102e]/95 p-3 shadow-[0_-12px_40px_rgba(0,0,0,0.45)] transition-[opacity,transform] duration-300 ease-out select-none motion-reduce:transition-none ${motionClass}`}>
+    <div className={`fixed inset-x-0 bottom-0 z-40 max-h-[70vh] overflow-y-auto border-t border-cyan-300/40 bg-[#03102e]/95 p-3 shadow-[0_-12px_40px_rgba(0,0,0,0.45)] select-none ${motionClass}`} style={motionStyle}>
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-2">
         <div className="flex items-baseline justify-between gap-3">
           <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{label}</p>

@@ -1,22 +1,24 @@
 "use client"
 
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react"
 
-export function usePresence(show: boolean, duration = 300) {
+export const MOTION_MS = 480
+
+export const motionStyle: CSSProperties = {
+  transitionProperty: "opacity, transform, translate, max-width, grid-template-rows",
+  transitionDuration: `${MOTION_MS}ms`,
+  transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
+}
+
+export function usePresence(show: boolean, duration = MOTION_MS) {
   const [mounted, setMounted] = useState(show)
   const [visible, setVisible] = useState(false)
 
   useEffect(() => {
-    let inner = 0
     if (show) {
       setMounted(true)
-      const outer = requestAnimationFrame(() => {
-        inner = requestAnimationFrame(() => setVisible(true))
-      })
-      return () => {
-        cancelAnimationFrame(outer)
-        cancelAnimationFrame(inner)
-      }
+      const timer = window.setTimeout(() => setVisible(true), 40)
+      return () => window.clearTimeout(timer)
     }
     setVisible(false)
     const timer = window.setTimeout(() => setMounted(false), duration)
@@ -39,9 +41,9 @@ export function Reveal({
 }) {
   const { mounted, visible } = usePresence(show)
   if (!mounted) return null
-  const hidden = motion === "up" ? "translate-y-3 opacity-0" : motion === "down" ? "-translate-y-2 opacity-0" : "translate-y-1 opacity-0 scale-[0.98]"
+  const hidden = motion === "up" ? "translate-y-6 opacity-0" : motion === "down" ? "-translate-y-4 opacity-0" : "translate-y-4 scale-[0.96] opacity-0"
   return (
-    <div className={`transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none ${visible ? "translate-y-0 scale-100 opacity-100" : hidden} ${className}`}>
+    <div className={`${visible ? "translate-y-0 scale-100 opacity-100" : hidden} ${className}`} style={motionStyle}>
       {children}
     </div>
   )
@@ -61,5 +63,9 @@ export function StatusLine({ text, className = "" }: { text: string; className?:
     return () => window.clearTimeout(timer)
   }, [text, shown])
 
-  return <p className={`transition-opacity duration-150 motion-reduce:transition-none ${on ? "opacity-100" : "opacity-0"} ${className}`}>{shown}</p>
+  return (
+    <p className={`${on ? "opacity-100" : "opacity-0"} ${className}`} style={{ transition: "opacity 180ms ease" }}>
+      {shown}
+    </p>
+  )
 }
