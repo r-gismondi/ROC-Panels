@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type CSSProperties } from "react"
 import { Slider } from "@/components/ui/slider"
 
 type PanelId = 1 | 2
@@ -850,9 +850,13 @@ export function WallConsole() {
               {IDS[2].every((id) => power[id]) ? "ON" : IDS[2].every((id) => !power[id]) ? "OFF" : "MIXED"}
             </span>
           </div>
-          <div className="grid min-h-0 flex-1 items-stretch gap-4 lg:grid-cols-5">
+          <div
+            className="flex min-h-0 w-full flex-1 items-stretch justify-center gap-2 [container-type:inline-size]"
+            style={{ ["--pad" as string]: "3rem", ["--seam" as string]: "2px", ["--tile" as string]: "max(0px, calc((100cqi - 4 * var(--pad) - 0.5rem - 3 * var(--seam)) / 5))" }}
+          >
             <ComputerFrame
-              className="lg:col-span-4"
+              className="h-full shrink-0"
+              style={{ width: "calc(4 * var(--tile) + 3 * var(--seam) + 2 * var(--pad))" }}
               rows={COMPUTER_2}
               preset={computer2Preset}
               selected={computer2Scope}
@@ -864,7 +868,8 @@ export function WallConsole() {
               onOpenRemote={openRemote}
             />
             <ComputerFrame
-              className="lg:col-span-1"
+              className="h-full shrink-0"
+              style={{ width: "calc(var(--tile) + 2 * var(--pad))" }}
               rows={COMPUTER_3}
               preset={activeComputer3Preset}
               selected={computer3Scope}
@@ -1031,32 +1036,22 @@ function PanelFrame({
         </div>
         <span className="text-[11px] tracking-[0.14em] text-cyan-100/80">{allOn ? "ON" : allOff ? "OFF" : "MIXED"}</span>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-transparent p-2">
-        <div className="flex min-h-0 flex-1 flex-col gap-2">
-        {rows.map((row) => (
-          <div key={row[0].id} className="grid min-h-0 flex-1 gap-2" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>
-            {row.map((screen) => (
-              <ScreenButton
-                key={screen.id}
-                screen={screen}
-                preset={preset}
-                selected={selection.screen === screen.id}
-                on={power[screen.id]}
-                thumbStamp={thumbStamp}
-                onSelect={() => onSelect({ panel, screen: screen.id })}
-                onOpenRemote={() => onOpenRemote(screen.id)}
-              />
-            ))}
-          </div>
-        ))}
-        </div>
-      </div>
+      <ScreenWall
+        rows={rows}
+        preset={preset}
+        selection={selection}
+        power={power}
+        thumbStamp={thumbStamp}
+        onSelect={(screen) => onSelect({ panel, screen })}
+        onOpenRemote={onOpenRemote}
+      />
     </section>
   )
 }
 
 function ComputerFrame({
   className = "",
+  style,
   rows,
   preset,
   selected,
@@ -1068,6 +1063,7 @@ function ComputerFrame({
   onOpenRemote,
 }: {
   className?: string
+  style?: CSSProperties
   rows: Screen[][]
   preset: Preset
   selected: boolean
@@ -1084,25 +1080,72 @@ function ComputerFrame({
         event.stopPropagation()
         onSelectFrame()
       }}
-      className={`flex h-full min-h-0 min-w-0 flex-col rounded-xl border p-4 ${className} ${selected ? "border-white bg-white/5" : "border-cyan-300/35"}`}
+      style={style}
+      className={`flex h-full min-h-0 min-w-0 flex-col rounded-xl border ${className} ${selected ? "border-white bg-white/5" : "border-cyan-300/35"}`}
     >
-      <div className="flex min-h-0 flex-1 flex-col gap-2">
-        {rows.map((row) => (
-          <div key={row[0].id} className="grid min-h-0 flex-1 gap-2" style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}>
-            {row.map((screen) => (
-              <ScreenButton
-                key={screen.id}
-                screen={screen}
-                preset={preset}
-                selected={selection.screen === screen.id}
-                on={power[screen.id]}
-                thumbStamp={thumbStamp}
-                onSelect={() => onSelectScreen(screen.id)}
-                onOpenRemote={() => onOpenRemote(screen.id)}
-              />
-            ))}
-          </div>
-        ))}
+      <ScreenWall
+        rows={rows}
+        preset={preset}
+        selection={selection}
+        power={power}
+        thumbStamp={thumbStamp}
+        onSelect={onSelectScreen}
+        onOpenRemote={onOpenRemote}
+      />
+    </div>
+  )
+}
+
+function ScreenWall({
+  rows,
+  preset,
+  selection,
+  power,
+  thumbStamp,
+  onSelect,
+  onOpenRemote,
+}: {
+  rows: Screen[][]
+  preset: Preset
+  selection: Selection
+  power: Record<string, boolean>
+  thumbStamp: number
+  onSelect: (screenId: string) => void
+  onOpenRemote: (screenId: string) => void
+}) {
+  const columns = rows.reduce((count, row) => Math.max(count, row.length), 1)
+  const rowCount = rows.length
+  const width = columns * 16
+  const height = rowCount * 9
+  return (
+    <div className="relative min-h-0 w-full flex-1">
+      <div className="absolute inset-0 p-12 [container-type:size]">
+        <div
+          className="grid gap-0.5"
+          style={{
+            width: `min(100cqw, calc(100cqh * ${width} / ${height}))`,
+            height: `min(100cqh, calc(100cqw * ${height} / ${width}))`,
+            gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+            gridTemplateRows: `repeat(${rowCount}, minmax(0, 1fr))`,
+            position: "absolute",
+            left: "50%",
+            top: "50%",
+            transform: "translate(-50%, -50%)",
+          }}
+        >
+          {rows.flat().map((screen) => (
+            <ScreenButton
+              key={screen.id}
+              screen={screen}
+              preset={preset}
+              selected={selection.screen === screen.id}
+              on={power[screen.id]}
+              thumbStamp={thumbStamp}
+              onSelect={() => onSelect(screen.id)}
+              onOpenRemote={() => onOpenRemote(screen.id)}
+            />
+          ))}
+        </div>
       </div>
     </div>
   )
@@ -1164,7 +1207,7 @@ function ScreenButton({
         event.stopPropagation()
         onOpenRemote()
       }}
-      className="relative h-full min-h-0 overflow-hidden rounded-lg border text-center transition"
+      className="relative h-full min-h-0 overflow-hidden rounded-sm border text-center transition"
       style={{
         borderColor: selected ? "#ffffff" : color,
         background: on ? `${color}33` : "rgba(0,0,0,0.45)",
