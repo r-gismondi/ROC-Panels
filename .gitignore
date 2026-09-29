@@ -1,6 +1,7 @@
 dist/
 layout-state/
 pinned-apps.json
+program-icons/
 packaging/cache/
 __pycache__/
 *.py[cod]

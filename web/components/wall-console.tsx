@@ -159,11 +159,13 @@ export function WallConsole() {
   const [layoutStatus, setLayoutStatus] = useState("Preset buttons preview the layout here. Confirm opens Edge on these screens.")
   const [pins, setPins] = useState<PinnedApp[]>([])
   const [armedApp, setArmedApp] = useState("")
+  const [programStatus, setProgramStatus] = useState("")
   const [browseBusy, setBrowseBusy] = useState(false)
   const [addresses, setAddresses] = useState<Record<string, string>>({})
   const [keyboardOpen, setKeyboardOpen] = useState(false)
   const [replaceAddress, setReplaceAddress] = useState(false)
   const layoutBusy = useRef(false)
+  const layoutNote = useRef("")
   const brightnessTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const controlRef = useRef<HTMLDivElement>(null)
   const [controlHeight, setControlHeight] = useState<number>()
@@ -435,10 +437,13 @@ export function WallConsole() {
         body: JSON.stringify({ computer, preset: id }),
       })
       const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null
-      setLayoutStatus(body?.message || body?.error || "The layout did not start.")
+      const note = body?.message || body?.error || "The layout did not start."
+      layoutNote.current = note
+      setLayoutStatus(note)
       return response.ok
     } catch {
-      setLayoutStatus("Could not reach the layout service.")
+      layoutNote.current = "Could not reach the layout service."
+      setLayoutStatus(layoutNote.current)
       return false
     } finally {
       layoutBusy.current = false
@@ -611,6 +616,17 @@ export function WallConsole() {
     if (/^TV\d+$/.test(next.screen)) void openArmedProgram(next.screen)
   }
 
+  function rememberApplied(computer: "101" | "102" | "103", id: string) {
+    if (computer === "103") {
+      setComputer3Preset(id)
+      setComputer3Applied(id)
+      return
+    }
+    const panelId: PanelId = computer === "101" ? 1 : 2
+    setPreset((currentPreset) => ({ ...currentPreset, [panelId]: id }))
+    setApplied((currentApplied) => ({ ...currentApplied, [panelId]: id }))
+  }
+
   async function openArmedProgram(screenId: string) {
     const pin = pins.find((item) => item.id === armedApp)
     if (!pin) return
@@ -618,22 +634,30 @@ export function WallConsole() {
     if (!computer || layoutBusy.current) return
     const appliedId = computer === "101" ? applied[1] : computer === "102" ? applied[2] : computer3Applied
     const selectedId = computer === "101" ? preset[1] : computer === "102" ? preset[2] : computer3Preset
-    if (!appliedId) {
-      setLayoutStatus("Confirm a layout, then open the program. Independent puts it on one screen.")
-      return
-    }
-    if (selectedId !== "" && selectedId !== appliedId) {
-      setLayoutStatus("Confirm the layout preview, then open the program.")
-      return
-    }
+    const previewing = selectedId !== "" && selectedId !== appliedId
+    const layoutId = appliedId && !previewing ? appliedId : selectedId || "independent"
     const list = computer === "103" ? COMPUTER_3_PRESETS : computer === "101" ? PRESETS[1] : PRESETS[2]
-    const active = list.find((item) => item.id === appliedId)
+    const active = list.find((item) => item.id === layoutId)
     const ids = computer === "103" ? COMPUTER_3_IDS : computer === "101" ? IDS[1] : COMPUTER_2_IDS
     const group = active?.groups[screenId]
     const zone = active ? ids.filter((id) => active.groups[id] === group) : [screenId]
     const label = zone.length > 1 ? `screens ${zone.map(screenNumber).join(", ")}` : `screen ${screenNumber(screenId)}`
+    if (!appliedId || previewing) {
+      const layoutName = list.find((item) => item.id === layoutId)?.name ?? "Independent"
+      const note = `Opening ${layoutName}, then ${pin.name} on ${label}…`
+      setProgramStatus(note)
+      setLayoutStatus(note)
+      const ok = await runLayout(computer, layoutId)
+      if (!ok) {
+        setProgramStatus(layoutNote.current || "The layout did not start.")
+        return
+      }
+      rememberApplied(computer, layoutId)
+    }
     layoutBusy.current = true
-    setLayoutStatus(`Opening ${pin.name} on ${label}…`)
+    const opening = `Opening ${pin.name} on ${label}…`
+    setProgramStatus(opening)
+    setLayoutStatus(opening)
     try {
       const response = await fetch("/api/apps", {
         method: "POST",
@@ -642,13 +666,19 @@ export function WallConsole() {
       })
       const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null
       if (!response.ok) {
-        setLayoutStatus(body?.error || "The program did not open.")
+        const note = body?.error || "The program did not open."
+        setProgramStatus(note)
+        setLayoutStatus(note)
         return
       }
-      setLayoutStatus(`Opened ${pin.name} on ${label}.`)
+      const note = `Opened ${pin.name} on ${label}.`
+      setProgramStatus(note)
+      setLayoutStatus(note)
       setArmedApp("")
     } catch {
-      setLayoutStatus("Could not reach the layout service.")
+      const note = "Could not reach the layout service."
+      setProgramStatus(note)
+      setLayoutStatus(note)
     } finally {
       layoutBusy.current = false
     }
@@ -657,6 +687,7 @@ export function WallConsole() {
   async function browseProgram() {
     if (browseBusy) return
     setBrowseBusy(true)
+    setProgramStatus("")
     setLayoutStatus("Choose a program.")
     try {
       const response = await fetch("/api/apps", {
@@ -898,9 +929,11 @@ export function WallConsole() {
         <div className="mb-2">
           <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">PROGRAMS</p>
           <p className="text-xs text-cyan-100/80">
-            {armedApp
-              ? "Tap a screen. The program replaces that layout group. Use Independent for one screen."
-              : "Browse for a program, then tap a screen."}
+            {programStatus
+              ? programStatus
+              : armedApp
+                ? "Tap a screen. The program replaces that layout group. Use Independent for one screen."
+                : "Browse for a program, then tap a screen."}
           </p>
         </div>
         <div className="flex items-stretch gap-2 overflow-x-auto pb-1">
@@ -911,14 +944,18 @@ export function WallConsole() {
             <div key={pin.id} className="flex shrink-0">
               <button
                 type="button"
-                onClick={() => setArmedApp((currentId) => (currentId === pin.id ? "" : pin.id))}
-                className={`min-h-11 max-w-48 truncate rounded-l-lg border border-r-0 px-3 text-sm tracking-wide ${
+                onClick={() => {
+                  setProgramStatus("")
+                  setArmedApp((currentId) => (currentId === pin.id ? "" : pin.id))
+                }}
+                className={`flex min-h-11 max-w-56 items-center gap-2 rounded-l-lg border border-r-0 px-3 text-sm tracking-wide ${
                   armedApp === pin.id
                     ? "border-cyan-200 bg-cyan-400/25 shadow-[0_0_16px_rgba(80,200,255,0.35)]"
                     : "border-cyan-300/35 bg-[#08245f]/80"
                 }`}
               >
-                {pin.name}
+                <ProgramIcon id={pin.id} />
+                <span className="min-w-0 truncate">{pin.name}</span>
               </button>
               <button
                 type="button"
@@ -1071,6 +1108,19 @@ function ComputerFrame({
         ))}
       </div>
     </div>
+  )
+}
+
+function ProgramIcon({ id }: { id: string }) {
+  const [hidden, setHidden] = useState(false)
+  if (hidden) return null
+  return (
+    <img
+      src={`/api/apps/icon?id=${encodeURIComponent(id)}`}
+      alt=""
+      className="h-6 w-6 shrink-0"
+      onError={() => setHidden(true)}
+    />
   )
 }
 

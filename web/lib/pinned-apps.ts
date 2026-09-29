@@ -192,9 +192,62 @@ export async function browseForProgram(): Promise<{ ok: true; pins: PinnedApp[];
   return { ok: true, pins: next, selectedId: pin.id }
 }
 
+function iconFile(id: string) {
+  return path.join(installRoot(), "program-icons", `${id}.png`)
+}
+
+const ICON_SCRIPT = `
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
+$icon = [System.Drawing.Icon]::ExtractAssociatedIcon($env:ROC_ICON_PATH)
+if (-not $icon) { exit 1 }
+$bitmap = $icon.ToBitmap()
+$bitmap.Save($env:ROC_ICON_OUT, [System.Drawing.Imaging.ImageFormat]::Png)
+$bitmap.Dispose()
+$icon.Dispose()
+`
+
+export async function readProgramIcon(id: string): Promise<Buffer | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null
+  const pin = readPins().find((item) => item.id === id)
+  if (!pin) return null
+  const file = iconFile(id)
+  try {
+    if (fs.existsSync(file) && fs.statSync(file).size > 32) return fs.readFileSync(file)
+  } catch {
+    return null
+  }
+  if (process.platform !== "win32" || !fs.existsSync(pin.path)) return null
+  const temporary = `${file}.${process.pid}.tmp`
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    await execFileAsync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ICON_SCRIPT], {
+      windowsHide: true,
+      timeout: 15000,
+      env: { ...process.env, ROC_ICON_PATH: pin.path, ROC_ICON_OUT: temporary },
+    })
+    fs.renameSync(temporary, file)
+    return fs.readFileSync(file)
+  } catch {
+    try {
+      fs.rmSync(temporary, { force: true })
+    } catch {
+      // The failed icon file is unused.
+    }
+    return null
+  }
+}
+
 export function removePin(id: string) {
   const next = readPins().filter((pin) => pin.id !== id)
   writePins(next)
+  if (/^[0-9a-f-]{36}$/i.test(id)) {
+    try {
+      fs.rmSync(iconFile(id), { force: true })
+    } catch {
+      // The icon cache is already gone.
+    }
+  }
   return next
 }
 

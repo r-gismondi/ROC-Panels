@@ -275,6 +275,15 @@ function rememberLayout(computer: string, preset: string) {
   fs.renameSync(temporary, file)
 }
 
+function layoutIsFresh(computer: string) {
+  try {
+    const age = Date.now() - fs.statSync(layoutStateFile(computer)).mtimeMs
+    return age >= 0 && age < 120000
+  } catch {
+    return false
+  }
+}
+
 export function readLayoutState() {
   const layouts: Record<string, string> = { "101": "", "102": "", "103": "" }
   for (const computer of Object.keys(layouts)) {
@@ -457,7 +466,10 @@ export async function launchProgram(screen: string, exePath: string, name: strin
   }
   const started = Date.now()
   let sawWorking = false
-  while (Date.now() - started < 30000) {
+  const freshLayout = layoutIsFresh(computer)
+  const deadline = freshLayout ? 75000 : 30000
+  const quietLimit = freshLayout ? deadline : 2500
+  while (Date.now() - started < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 200))
     let text = ""
     try {
@@ -466,7 +478,9 @@ export async function launchProgram(screen: string, exePath: string, name: strin
       text = ""
     }
     if (!text) {
-      if (!sawWorking && Date.now() - started > 2500) return { ok: false, message: "Confirm a layout, then open the program." }
+      if (!sawWorking && Date.now() - started > quietLimit) {
+        return { ok: false, message: freshLayout ? "The program did not open." : "Confirm a layout, then open the program." }
+      }
       continue
     }
     if (text === "working") {
