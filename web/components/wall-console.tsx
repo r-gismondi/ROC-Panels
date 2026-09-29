@@ -165,7 +165,6 @@ export function WallConsole() {
   const [keyboardOpen, setKeyboardOpen] = useState(false)
   const [replaceAddress, setReplaceAddress] = useState(false)
   const layoutBusy = useRef(false)
-  const layoutNote = useRef("")
   const brightnessTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const controlRef = useRef<HTMLDivElement>(null)
   const [controlHeight, setControlHeight] = useState<number>()
@@ -437,13 +436,10 @@ export function WallConsole() {
         body: JSON.stringify({ computer, preset: id }),
       })
       const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null
-      const note = body?.message || body?.error || "The layout did not start."
-      layoutNote.current = note
-      setLayoutStatus(note)
+      setLayoutStatus(body?.message || body?.error || "The layout did not start.")
       return response.ok
     } catch {
-      layoutNote.current = "Could not reach the layout service."
-      setLayoutStatus(layoutNote.current)
+      setLayoutStatus("Could not reach the layout service.")
       return false
     } finally {
       layoutBusy.current = false
@@ -627,33 +623,33 @@ export function WallConsole() {
     setApplied((currentApplied) => ({ ...currentApplied, [panelId]: id }))
   }
 
+  async function runningLayout(computer: "101" | "102" | "103") {
+    const known = computer === "101" ? applied[1] : computer === "102" ? applied[2] : computer3Applied
+    if (known) return known
+    try {
+      const response = await fetch("/api/layout")
+      const body = (await response.json()) as { layouts?: Record<string, string> }
+      const allowed = computer === "103" ? COMPUTER_3_PRESETS.map((item) => item.id) : computer === "101" ? PRESETS[1].map((item) => item.id) : PRESETS[2].map((item) => item.id)
+      const saved = savedPreset(body.layouts?.[computer], allowed)
+      if (saved) rememberApplied(computer, saved)
+      return saved
+    } catch {
+      return ""
+    }
+  }
+
   async function openArmedProgram(screenId: string) {
     const pin = pins.find((item) => item.id === armedApp)
     if (!pin) return
     const computer = COMPUTER_OF[screenId]
     if (!computer || layoutBusy.current) return
-    const appliedId = computer === "101" ? applied[1] : computer === "102" ? applied[2] : computer3Applied
-    const selectedId = computer === "101" ? preset[1] : computer === "102" ? preset[2] : computer3Preset
-    const previewing = selectedId !== "" && selectedId !== appliedId
-    const layoutId = appliedId && !previewing ? appliedId : selectedId || "independent"
+    const layoutId = await runningLayout(computer)
     const list = computer === "103" ? COMPUTER_3_PRESETS : computer === "101" ? PRESETS[1] : PRESETS[2]
     const active = list.find((item) => item.id === layoutId)
     const ids = computer === "103" ? COMPUTER_3_IDS : computer === "101" ? IDS[1] : COMPUTER_2_IDS
     const group = active?.groups[screenId]
     const zone = active ? ids.filter((id) => active.groups[id] === group) : [screenId]
     const label = zone.length > 1 ? `screens ${zone.map(screenNumber).join(", ")}` : `screen ${screenNumber(screenId)}`
-    if (!appliedId || previewing) {
-      const layoutName = list.find((item) => item.id === layoutId)?.name ?? "Independent"
-      const note = `Opening ${layoutName}, then ${pin.name} on ${label}…`
-      setProgramStatus(note)
-      setLayoutStatus(note)
-      const ok = await runLayout(computer, layoutId)
-      if (!ok) {
-        setProgramStatus(layoutNote.current || "The layout did not start.")
-        return
-      }
-      rememberApplied(computer, layoutId)
-    }
     layoutBusy.current = true
     const opening = `Opening ${pin.name} on ${label}…`
     setProgramStatus(opening)
