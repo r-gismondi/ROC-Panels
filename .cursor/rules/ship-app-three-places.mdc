@@ -1,0 +1,16 @@
+---
+description: After any app change, update web, the dist pedestal app, and GitHub
+alwaysApply: true
+---
+
+# Ship the app in three places
+
+Any files the task needs may be changed. Do not stop after editing source alone.
+
+Before an app change is done, the same change must be in all three places:
+
+1. **`web/`** — the console source. Change other repo files too when the task needs them.
+2. **`dist/ROC-Panels`** — the packaged pedestal app (`ROC-Panels.exe`). Rebuild it with `packaging/Build-Pedestal.ps1` so this copy matches the source. `dist/` is gitignored; it is the local app, not something to commit. If the running app locks that folder, close it and continue.
+3. **GitHub** — commit the source, push it, and merge it into the default branch.
+
+Leave all three current together. A change that exists only in the working tree, only in `web/`, or only in `dist/ROC-Panels` is not finished.
