@@ -333,7 +333,7 @@ export async function launchLayout(computer: string, preset: string): Promise<La
       await new Promise((resolve) => setTimeout(resolve, 700))
     }
     queueLaunch(command.host, command.path)
-    rememberLayout(computer, preset)
+    if (preset !== "close") rememberLayout(computer, preset)
     const where = SCREEN_RANGES[computer] ?? "these screens"
     const message = command.label === "Close" ? `Closed Edge on ${where}.` : `Opened ${command.label} on ${where}.`
     return { ok: true, message }
