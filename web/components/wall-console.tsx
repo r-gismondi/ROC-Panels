@@ -839,7 +839,8 @@ export function WallConsole() {
           </div>
       </header>
 
-      <section className="flex min-h-0 flex-1 flex-col gap-3 px-4 py-3 lg:px-6">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <section className="flex flex-col gap-3 px-4 py-3 lg:px-6">
         <div className="rounded-2xl border border-cyan-300/40 bg-[#0a2f86]/55 p-3 shadow-[0_0_28px_rgba(40,140,255,0.25)]">
           <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
             <div className="min-w-64 flex-[1.2] basis-64">
@@ -1093,6 +1094,7 @@ export function WallConsole() {
           ) : null}
         </div>
       </section>
+      </div>
       {drag
         ? (() => {
             const pin = pins.find((item) => item.id === drag.id)
