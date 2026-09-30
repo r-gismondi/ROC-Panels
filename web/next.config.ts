@@ -7,6 +7,9 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.dirname(fileURLToPath(import.meta.url)),
   },
+  async headers() {
+    return [{ source: "/", headers: [{ key: "Cache-Control", value: "no-store" }] }]
+  },
 }
 
 export default nextConfig

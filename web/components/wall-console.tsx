@@ -1332,10 +1332,12 @@ function ScreenThumb({ id, stamp, dim }: { id: string; stamp: number; dim: boole
   }, [id, stamp])
   if (!src) return null
   return (
-    <span
-      aria-hidden
-      className={`absolute inset-0 bg-contain bg-center bg-no-repeat ${dim ? "opacity-40" : ""}`}
-      style={{ backgroundImage: `url("${src}")` }}
+    <img
+      src={src}
+      alt=""
+      draggable={false}
+      className={dim ? "opacity-40" : ""}
+      style={{ display: "block", width: "auto", height: "auto", maxWidth: "100%", maxHeight: "100%" }}
     />
   )
 }
@@ -1375,14 +1377,15 @@ function ScreenButton({
         event.stopPropagation()
         onOpenRemote()
       }}
-      className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-sm border text-center transition-[border-color,box-shadow,background-color] duration-200"
+      className="grid h-full min-h-0 w-full overflow-hidden rounded-sm border text-center transition-[border-color,box-shadow,background-color] duration-200"
       style={{
+        gridTemplateRows: "minmax(0, 1fr) auto",
         borderColor: hot || selected ? "#ffffff" : color,
         background: on ? `${color}33` : "rgba(0,0,0,0.45)",
         boxShadow: hot ? "0 0 18px #7ee8ff" : selected ? `0 0 16px ${color}` : undefined,
       }}
     >
-      <span className="relative min-h-0 w-full flex-1">
+      <span className="flex min-h-0 items-center justify-center">
         <ScreenThumb id={screen.id} stamp={thumbStamp} dim={!on} />
       </span>
       <span className="pointer-events-none shrink-0 px-1 pt-0.5 pb-1">
