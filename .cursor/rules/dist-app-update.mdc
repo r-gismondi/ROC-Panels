@@ -1,0 +1,15 @@
+---
+description: Close the running dist app instead of letting it block an update
+alwaysApply: true
+---
+
+# Dist app updates
+
+`dist/ROC-Panels` is the packaged pedestal app (`ROC-Panels.exe`). Replacing it fails while that app is open, because it locks `server`, `scripts`, and the exe.
+
+If an update needs to rebuild or copy into `dist/ROC-Panels` and the app is running, close it and continue. Do not stop, ask, or leave the update blocked.
+
+- Close `ROC-Panels.exe`.
+- Close child processes whose executable is under `dist/ROC-Panels`, including `dist/ROC-Panels/node/node.exe` and the Edge kiosk that launcher started.
+- Do not kill unrelated Node, Edge, or Cursor processes.
+- Retry the replace or rebuild after those processes are gone.
