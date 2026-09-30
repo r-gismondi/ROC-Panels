@@ -1137,8 +1137,7 @@ export function WallConsole() {
           </div>
           {coachPresence.mounted ? (
             <div
-              className={`relative w-full shrink-0 overflow-hidden lg:h-auto lg:self-stretch ${coachPresence.visible ? "h-56 max-w-full lg:max-w-[34rem]" : "h-0 max-w-0"}`}
-              style={motionStyle}
+              className={`relative shrink-0 overflow-hidden ${coachPresence.visible ? "h-56 w-full lg:w-[34rem]" : "h-0 w-0"}`}
             >
               <div className="absolute inset-0 overflow-hidden">
                 <div

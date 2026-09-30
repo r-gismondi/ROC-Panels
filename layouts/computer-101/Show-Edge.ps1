@@ -620,14 +620,12 @@ function Open-ZonePage($Target, [string]$Url) {
     }
 }
 function Start-ZoneEdge([string]$Url, [string]$Screen) {
-    $profileDir = Join-Path $root ("edge-profiles\" + $Screen)
-    New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
     $seen = @{}
     foreach ($existing in @([PanelWin]::VisibleWindows())) { $seen[$existing.ToInt64()] = $true }
     foreach ($existing in @($known.Keys)) { $seen[[int64]$existing] = $true }
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
-    $startInfo.Arguments = "--user-data-dir=`"$profileDir`" --no-first-run --no-default-browser-check --disable-sync --disable-features=Windows10CustomTitlebar --app=`"$Url`" --new-window"
+    $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --remote-debugging-port=9333 --remote-allow-origins=* --app=`"$Url`" --new-window"
     $startInfo.UseShellExecute = $true
     $started = New-Object System.Diagnostics.Process
     $started.StartInfo = $startInfo
@@ -689,7 +687,8 @@ $urlTimer.Add_Tick({
                 return
             }
             [System.IO.File]::WriteAllText($resultPath, "working", $utf8)
-            $page = Find-ZonePage $match.Hwnd
+            $page = $null
+            if ($match.Kind -eq "edge" -and $match.Hwnd -and $match.Hwnd -ne [IntPtr]::Zero) { $page = Find-ZonePage $match.Hwnd }
             $openedPage = $page -and (Open-ZonePage $page $url)
             if (-not $openedPage) {
                 $hwnd = Start-ZoneEdge $url $screen
@@ -701,12 +700,14 @@ $urlTimer.Add_Tick({
                 [void][PanelWin]::ShowWindow($match.Host, 9)
                 [void][PanelWin]::Place($hwnd, $match.X, $match.Y, $match.W, $match.H)
                 [void][PanelWin]::Fit($hwnd, $match.Host, $match.X, $match.Y, $match.W, $match.H)
-                [void][PanelWin]::CloseWindow($match.Hwnd)
-                [void]$known.Remove($match.Hwnd.ToInt64())
+                if ($match.Hwnd -and $match.Hwnd -ne [IntPtr]::Zero) {
+                    [void][PanelWin]::CloseWindow($match.Hwnd)
+                    [void]$known.Remove($match.Hwnd.ToInt64())
+                }
                 $match.Hwnd = $hwnd
                 $known[$hwnd.ToInt64()] = $true
             }
-            $ids = foreach ($item in $opened) { $item.Hwnd.ToInt64().ToString() }
+            $ids = foreach ($item in $opened) { if ($item.Hwnd -and $item.Hwnd -ne [IntPtr]::Zero) { $item.Hwnd.ToInt64().ToString() } }
             Set-Content -LiteralPath $hwndFile -Value $ids -Encoding Ascii
             $saveDir = Join-Path $root "addresses"
             New-Item -ItemType Directory -Force -Path $saveDir | Out-Null
@@ -773,7 +774,7 @@ function Wait-AppWindow($Started) {
     return [IntPtr]::Zero
 }
 function Save-ZoneHwnds {
-    $ids = foreach ($item in $opened) { $item.Hwnd.ToInt64().ToString() }
+    $ids = foreach ($item in $opened) { if ($item.Hwnd -and $item.Hwnd -ne [IntPtr]::Zero) { $item.Hwnd.ToInt64().ToString() } }
     Set-Content -LiteralPath $hwndFile -Value $ids -Encoding Ascii
 }
 New-Item -ItemType Directory -Force -Path (Join-Path $root "app-requests") | Out-Null
@@ -833,8 +834,10 @@ $appTimer.Add_Tick({
             }
             [void][PanelWin]::ShowWindow($match.Host, 0)
             [void][PanelWin]::Place($hwnd, $match.X, $match.Y, $match.W, $match.H)
-            [void][PanelWin]::CloseWindow($match.Hwnd)
-            [void]$known.Remove($match.Hwnd.ToInt64())
+            if ($match.Hwnd -and $match.Hwnd -ne [IntPtr]::Zero) {
+                [void][PanelWin]::CloseWindow($match.Hwnd)
+                [void]$known.Remove($match.Hwnd.ToInt64())
+            }
             $match.Hwnd = $hwnd
             $match.Kind = "app"
             $known[$hwnd.ToInt64()] = $true
@@ -852,12 +855,14 @@ $appTimer.Add_Tick({
 })
 $appTimer.Start()
 function Close-OpenedZone($Item) {
-    $Item | Add-Member -NotePropertyName Closed -NotePropertyValue $true -Force
-    $script:opened = @($script:opened | Where-Object { -not $_.Closed })
-    try { [void]$known.Remove($Item.Hwnd.ToInt64()) } catch {}
+    if ($Item.Hwnd -and $Item.Hwnd -ne [IntPtr]::Zero) {
+        try { [void][PanelWin]::CloseWindow($Item.Hwnd) } catch {}
+        try { [void]$known.Remove($Item.Hwnd.ToInt64()) } catch {}
+    }
+    $Item.Hwnd = [IntPtr]::Zero
+    $Item.Kind = "empty"
+    try { if ($Item.Host -and $Item.Host -ne [IntPtr]::Zero) { [void][PanelWin]::ShowWindow($Item.Host, 5) } } catch {}
     Save-ZoneHwnds
-    try { if ($Item.Hwnd -and $Item.Hwnd -ne [IntPtr]::Zero) { [void][PanelWin]::CloseWindow($Item.Hwnd) } } catch {}
-    try { if ($Item.Host -and $Item.Host -ne [IntPtr]::Zero) { [void][PanelWin]::CloseWindow($Item.Host) } } catch {}
 }
 New-Item -ItemType Directory -Force -Path (Join-Path $root "close-requests") | Out-Null
 $closeTimer = New-Object System.Windows.Forms.Timer
@@ -894,8 +899,7 @@ $closeTimer.Add_Tick({
                 [System.IO.File]::WriteAllText($resultPath, "error That screen is not open in this layout.", $utf8)
                 return
             }
-            $empty = @($script:opened).Count -le 1
-            [System.IO.File]::WriteAllText($resultPath, $(if ($empty) { "empty" } else { "ok" }), $utf8)
+            [System.IO.File]::WriteAllText($resultPath, "ok", $utf8)
             Close-OpenedZone $match
         } catch {
             $reason = $_.Exception.Message
