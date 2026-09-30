@@ -1331,7 +1331,7 @@ function ScreenThumb({ id, stamp, dim }: { id: string; stamp: number; dim: boole
     probe.src = next
   }, [id, stamp])
   if (!src) return null
-  return <img src={src} alt="" className={`absolute inset-0 h-full w-full object-cover ${dim ? "opacity-40" : ""}`} />
+  return <img src={src} alt="" className={`absolute inset-0 h-full w-full object-contain ${dim ? "opacity-40" : ""}`} />
 }
 
 function ScreenButton({
@@ -1369,15 +1369,17 @@ function ScreenButton({
         event.stopPropagation()
         onOpenRemote()
       }}
-      className="relative h-full min-h-0 overflow-hidden rounded-sm border text-center transition-[border-color,box-shadow,background-color] duration-200"
+      className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-sm border text-center transition-[border-color,box-shadow,background-color] duration-200"
       style={{
         borderColor: hot || selected ? "#ffffff" : color,
         background: on ? `${color}33` : "rgba(0,0,0,0.45)",
         boxShadow: hot ? "0 0 18px #7ee8ff" : selected ? `0 0 16px ${color}` : undefined,
       }}
     >
-      <ScreenThumb id={screen.id} stamp={thumbStamp} dim={!on} />
-      <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/35 to-transparent px-1 pt-3 pb-1">
+      <span className="relative min-h-0 w-full flex-1">
+        <ScreenThumb id={screen.id} stamp={thumbStamp} dim={!on} />
+      </span>
+      <span className="pointer-events-none shrink-0 px-1 pt-0.5 pb-1">
         <span className="block text-sm font-semibold leading-tight">{number}</span>
         <span className="block text-[10px] leading-tight text-cyan-50/90">{screen.hdmi}</span>
       </span>
