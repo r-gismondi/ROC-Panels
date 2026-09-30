@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as R
 import { DragCoach } from "@/components/drag-coach"
 import { Reveal, StatusLine, motionStyle, usePresence } from "@/components/presence"
 import { Slider } from "@/components/ui/slider"
+import { C_CONNECT_ID, C_CONNECT_NAME, C_CONNECT_URL, programIconClass, programIconSrc } from "@/lib/c-connect"
 
 type PanelId = 1 | 2
 
@@ -11,7 +12,13 @@ type Screen = { id: string; hdmi: string }
 
 type Preset = { id: string; name: string; groups: Record<string, number> }
 
-type PinnedApp = { id: string; name: string; path: string }
+type PinnedApp = { id: string; name: string; path: string; locked?: boolean }
+
+const C_CONNECT_PIN: PinnedApp = { id: C_CONNECT_ID, name: C_CONNECT_NAME, path: C_CONNECT_URL, locked: true }
+
+function withCConnect(pins: PinnedApp[]) {
+  return [C_CONNECT_PIN, ...pins.filter((pin) => pin.id !== C_CONNECT_ID)]
+}
 
 const GROUP_LABEL = {
   "101": "screens 1–8",
@@ -159,7 +166,7 @@ export function WallConsole() {
   const [power, setPower] = useState<Record<string, boolean>>(initialPower)
   const [brightness, setBrightness] = useState<Record<string, number>>(initialBrightness)
   const [layoutStatus, setLayoutStatus] = useState("Preset buttons preview the layout here. Confirm opens Edge on these screens.")
-  const [pins, setPins] = useState<PinnedApp[]>([])
+  const [pins, setPins] = useState<PinnedApp[]>([C_CONNECT_PIN])
   const [armedApp, setArmedApp] = useState("")
   const [programStatus, setProgramStatus] = useState("")
   const [browseBusy, setBrowseBusy] = useState(false)
@@ -300,7 +307,7 @@ export function WallConsole() {
       try {
         const response = await fetch("/api/apps")
         const body = (await response.json()) as { pins?: PinnedApp[] }
-        if (!cancel && body.pins) setPins(body.pins)
+        if (!cancel && body.pins) setPins(withCConnect(body.pins))
       } catch {
         // The shelf stays empty until a program is added.
       }
@@ -703,6 +710,13 @@ export function WallConsole() {
       const note = `Opened ${pin.name} on ${label}.`
       setProgramStatus(note)
       setLayoutStatus(note)
+      if (pin.id === C_CONNECT_ID) {
+        setAddresses((existing) => {
+          const next = { ...existing }
+          for (const id of zone) next[id] = C_CONNECT_URL
+          return next
+        })
+      }
       setArmedApp("")
     } catch {
       const note = "Could not reach the layout service."
@@ -777,7 +791,7 @@ export function WallConsole() {
         setLayoutStatus(body?.error || "The program list could not be opened.")
         return
       }
-      setPins(body.pins)
+      setPins(withCConnect(body.pins))
       if (body.selectedId) setArmedApp(body.selectedId)
       setLayoutStatus(body.canceled ? "No program was added." : "Tap a screen, or drag the program onto it.")
     } catch {
@@ -796,7 +810,7 @@ export function WallConsole() {
         body: JSON.stringify({ action: "remove", id }),
       })
       const body = (await response.json().catch(() => null)) as { pins?: PinnedApp[] } | null
-      if (body?.pins) setPins(body.pins)
+      if (body?.pins) setPins(withCConnect(body.pins))
     } catch {
       setLayoutStatus("Could not reach the layout service.")
     }
@@ -1045,7 +1059,9 @@ export function WallConsole() {
                     type="button"
                     data-program-id={pin.id}
                     {...programPointer(pin.id)}
-                    className={`flex min-h-11 max-w-56 cursor-grab touch-none items-center gap-2 rounded-l-lg border border-r-0 px-3 text-sm tracking-wide select-none active:cursor-grabbing ${
+                    className={`flex min-h-11 max-w-56 cursor-grab touch-none items-center gap-2 border px-3 text-sm tracking-wide select-none active:cursor-grabbing ${
+                      pin.locked ? "rounded-lg" : "rounded-l-lg border-r-0"
+                    } ${
                       armedApp === pin.id
                         ? "border-cyan-200 bg-cyan-400/25 shadow-[0_0_16px_rgba(80,200,255,0.35)]"
                         : "border-cyan-300/35 bg-[#08245f]/80"
@@ -1054,16 +1070,18 @@ export function WallConsole() {
                     <ProgramIcon id={pin.id} />
                     <span className="min-w-0 truncate">{pin.name}</span>
                   </button>
-                  <button
-                    type="button"
-                    aria-label={`Remove ${pin.name}`}
-                    onClick={() => void removeProgram(pin.id)}
-                    className={`min-h-11 rounded-r-lg border px-3 text-sm ${
-                      armedApp === pin.id ? "border-cyan-200 bg-cyan-400/25" : "border-cyan-300/35 bg-[#08245f]/80"
-                    }`}
-                  >
-                    ×
-                  </button>
+                  {pin.locked ? null : (
+                    <button
+                      type="button"
+                      aria-label={`Remove ${pin.name}`}
+                      onClick={() => void removeProgram(pin.id)}
+                      className={`min-h-11 rounded-r-lg border px-3 text-sm ${
+                        armedApp === pin.id ? "border-cyan-200 bg-cyan-400/25" : "border-cyan-300/35 bg-[#08245f]/80"
+                      }`}
+                    >
+                      ×
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -1295,10 +1313,10 @@ function ProgramIcon({ id }: { id: string }) {
   if (hidden) return null
   return (
     <img
-      src={`/api/apps/icon?id=${encodeURIComponent(id)}`}
+      src={programIconSrc(id)}
       alt=""
       draggable={false}
-      className="h-6 w-6 shrink-0"
+      className={programIconClass(id)}
       onError={() => setHidden(true)}
     />
   )

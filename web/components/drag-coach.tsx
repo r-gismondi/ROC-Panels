@@ -1,16 +1,17 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { programIconClass, programIconSrc } from "@/lib/c-connect"
 
 function ProgramMark({ id }: { id: string }) {
   const [hidden, setHidden] = useState(false)
   if (hidden) return <span className="h-6 w-6 shrink-0" />
   return (
     <img
-      src={`/api/apps/icon?id=${encodeURIComponent(id)}`}
+      src={programIconSrc(id)}
       alt=""
       draggable={false}
-      className="h-6 w-6 shrink-0"
+      className={programIconClass(id)}
       onError={() => setHidden(true)}
     />
   )
