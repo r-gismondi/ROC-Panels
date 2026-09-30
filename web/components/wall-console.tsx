@@ -808,7 +808,7 @@ export function WallConsole() {
   const coachPresence = usePresence(Boolean(armedPin) && !drag)
 
   return (
-    <main className="flex min-h-svh flex-col bg-[radial-gradient(circle_at_top,#1650c8_0%,#06215f_42%,#03102e_100%)] text-white">
+    <main className="flex h-svh flex-col overflow-hidden bg-[radial-gradient(circle_at_top,#1650c8_0%,#06215f_42%,#03102e_100%)] text-white">
       <header className="flex items-center justify-between gap-4 border-b border-cyan-300/30 px-4 py-3 sm:px-6">
         <div className="flex items-center gap-3">
           <img src="/mt-logo.png" alt="MT" className="h-10 w-auto" />
@@ -1020,7 +1020,7 @@ export function WallConsole() {
         />
       </footer>
       <section className="border-t border-cyan-300/30 px-4 py-3 sm:px-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch">
+        <div className="flex min-w-0 flex-col gap-4 overflow-x-hidden lg:flex-row lg:items-stretch">
           <div className="min-w-0 flex-1">
             <div className="mb-2">
               <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">PROGRAMS</p>
@@ -1032,10 +1032,10 @@ export function WallConsole() {
                       ? "Tap a screen to open it there. Tap anywhere else to cancel."
                       : "Browse for a program, then tap a screen or drag it onto one."
                 }
-                className="text-xs text-cyan-100/80"
+                className="line-clamp-2 min-h-10 text-xs leading-5 text-cyan-100/80"
               />
             </div>
-            <div className="flex items-stretch gap-2 overflow-x-auto pb-1">
+            <div className="flex items-stretch gap-2 overflow-x-auto overflow-y-hidden pb-1">
               <GlowButton active={browseBusy} onClick={() => void browseProgram()}>
                 {browseBusy ? "Opening…" : "Browse"}
               </GlowButton>
@@ -1070,10 +1070,15 @@ export function WallConsole() {
           </div>
           {coachPresence.mounted ? (
             <div
-              className={`min-w-0 overflow-hidden ${coachPresence.visible ? "w-full max-w-full translate-y-0 scale-100 opacity-100 lg:max-w-[34rem]" : "w-0 max-w-0 translate-y-4 scale-95 opacity-0"}`}
+              className={`min-w-0 overflow-hidden ${coachPresence.visible ? "w-full max-w-full lg:max-w-[34rem]" : "w-0 max-w-0"}`}
               style={motionStyle}
             >
-              {coachPin ? <DragCoach name={coachPin.name} id={coachPin.id} /> : null}
+              <div
+                className={`h-full ${coachPresence.visible ? "translate-y-0 scale-100 opacity-100" : "translate-y-4 scale-95 opacity-0"}`}
+                style={motionStyle}
+              >
+                {coachPin ? <DragCoach name={coachPin.name} id={coachPin.id} /> : null}
+              </div>
             </div>
           ) : null}
         </div>
