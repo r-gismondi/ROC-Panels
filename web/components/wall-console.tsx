@@ -467,17 +467,6 @@ export function WallConsole() {
     }
   }
 
-  function forgetLayout(computer: "101" | "102" | "103") {
-    if (computer === "103") {
-      setComputer3Preset("")
-      setComputer3Applied("")
-      return
-    }
-    const panel: PanelId = computer === "101" ? 1 : 2
-    setPreset((currentPreset) => ({ ...currentPreset, [panel]: "" }))
-    setApplied((currentApplied) => ({ ...currentApplied, [panel]: "" }))
-  }
-
   async function closeAllEdge() {
     if (layoutBusy.current) return
     layoutBusy.current = true
@@ -495,7 +484,6 @@ export function WallConsole() {
           return { computer, ok: response.ok, text: body?.message || body?.error || "The layout did not start." }
         }),
       )
-      results.filter((item) => item.ok).forEach((item) => forgetLayout(item.computer))
       const failed = results.filter((item) => !item.ok)
       setLayoutStatus(failed.length === 0 ? "Closed Edge on every screen." : failed.map((item) => item.text).join(" "))
     } catch {
@@ -1015,10 +1003,7 @@ export function WallConsole() {
             setLayoutStatus(`Canceled the preview on ${footer.target}.`)
           }}
           onClose={() => {
-            void (async () => {
-              const ok = await runLayout(footer.computer, "close")
-              if (ok) forgetLayout(footer.computer)
-            })()
+            void runLayout(footer.computer, "close")
           }}
           onCloseAll={() => {
             void closeAllEdge()
