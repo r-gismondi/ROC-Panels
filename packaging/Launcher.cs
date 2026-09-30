@@ -133,9 +133,10 @@ static class Program {
         if (edge == null) return null;
         string profile = Path.Combine(root, "edge-profile");
         Directory.CreateDirectory(profile);
+        string page = "http://127.0.0.1:" + Port + "/?build=" + File.GetLastWriteTimeUtc(Path.Combine(root, "ROC-Panels.exe")).Ticks;
         var start = new ProcessStartInfo();
         start.FileName = edge;
-        start.Arguments = "--kiosk http://127.0.0.1:" + Port + " --edge-kiosk-type=fullscreen --no-first-run --no-default-browser-check --disable-features=Translate --user-data-dir=\"" + profile + "\"";
+        start.Arguments = "--kiosk " + page + " --edge-kiosk-type=fullscreen --no-first-run --no-default-browser-check --disable-features=Translate --user-data-dir=\"" + profile + "\"";
         start.UseShellExecute = false;
         return Process.Start(start);
     }
