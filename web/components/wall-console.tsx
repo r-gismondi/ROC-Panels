@@ -911,7 +911,7 @@ export function WallConsole() {
           ) : null}
         </div>
 
-        <div className="grid items-start gap-4 lg:grid-cols-[4fr_5fr]">
+        <div className="grid items-stretch gap-4 lg:grid-cols-[4fr_5fr]">
         <PanelFrame
           panel={1}
           title="Panel 1"
@@ -928,7 +928,7 @@ export function WallConsole() {
 
         <section
           onClick={() => setSelection({ panel: 2, screen: "all" })}
-          className={`flex min-h-0 cursor-pointer flex-col rounded-2xl border bg-[#071a4d]/70 p-3 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
+          className={`flex h-full min-h-0 cursor-pointer flex-col rounded-2xl border bg-[#071a4d]/70 p-3 pb-5 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
             selection.panel === 2 && selection.screen === "all"
               ? "border-white shadow-[0_0_24px_rgba(180,230,255,0.35)]"
               : selection.panel === 2
@@ -946,7 +946,7 @@ export function WallConsole() {
             </span>
           </div>
           <div
-            className="flex w-full items-start justify-center gap-2 [container-type:inline-size]"
+            className="flex w-full items-stretch justify-center gap-2 [container-type:inline-size]"
             style={{ ["--pad" as string]: "1.25rem", ["--seam" as string]: "4px", ["--tile" as string]: "max(0px, calc((100cqi - 4 * var(--pad) - 0.5rem - 3 * var(--seam)) / 5))" }}
           >
             <ComputerFrame
@@ -1176,7 +1176,7 @@ function PanelFrame({
   return (
     <section
       onClick={() => onSelect({ panel, screen: "all" })}
-      className={`flex min-h-0 cursor-pointer flex-col rounded-2xl border bg-[#071a4d]/70 p-3 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
+      className={`flex h-full min-h-0 cursor-pointer flex-col rounded-2xl border bg-[#071a4d]/70 p-3 pb-5 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
         whole ? "border-white shadow-[0_0_24px_rgba(180,230,255,0.35)]" : selection.panel === panel ? "border-cyan-300/70" : "border-cyan-300/25"
       }`}
     >
@@ -1235,7 +1235,7 @@ function ComputerFrame({
         onSelectFrame()
       }}
       style={style}
-      className={`flex min-w-0 flex-col rounded-xl border ${className} ${selected ? "border-white bg-white/5" : "border-cyan-300/35"}`}
+      className={`flex min-w-0 flex-col rounded-xl border py-3 ${className} ${selected ? "border-white bg-white/5" : "border-cyan-300/35"}`}
     >
       <ScreenWall
         rows={rows}
