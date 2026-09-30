@@ -1,10 +1,10 @@
-import { browseForProgram, launchPinned, readPins, removePin } from "@/lib/pinned-apps"
+import { browseForProgram, launchPinned, listedPins, removePin } from "@/lib/pinned-apps"
 import { NextResponse } from "next/server"
 
 export const runtime = "nodejs"
 
 export async function GET() {
-  return NextResponse.json({ pins: readPins() })
+  return NextResponse.json({ pins: listedPins() })
 }
 
 export async function POST(request: Request) {

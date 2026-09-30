@@ -446,6 +446,16 @@ function validProgram(exePath: string) {
   return /^[A-Za-z]:\\[^<>:"|?*\r\n]+\.exe$/i.test(exePath) && exePath.length <= 260
 }
 
+export async function launchScreenAddress(screen: string, url: string, name: string): Promise<LaunchResult> {
+  const computer = computerForScreen(screen)
+  if (!computer) return { ok: false, message: "Choose a program, then tap a screen." }
+  const layout = readLayoutState()[computer]
+  if (!layout || layout === "close") return { ok: false, message: "Confirm a layout, then open the program." }
+  const opened = await setLayoutAddress(computer, screen, url)
+  if (!opened.ok) return opened
+  return { ok: true, message: `Opened ${name}.` }
+}
+
 export async function launchProgram(screen: string, exePath: string, name: string): Promise<LaunchResult> {
   const computer = computerForScreen(screen)
   const host = HOSTS[computer]

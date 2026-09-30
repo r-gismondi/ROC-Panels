@@ -3,12 +3,19 @@ import crypto from "crypto"
 import { promisify } from "util"
 import fs from "fs"
 import path from "path"
+import { C_CONNECT_ID, C_CONNECT_NAME, C_CONNECT_URL } from "@/lib/c-connect"
 import { installRoot } from "@/lib/install-root"
-import { launchProgram, type LaunchResult } from "@/lib/launch-layout"
+import { launchProgram, launchScreenAddress, type LaunchResult } from "@/lib/launch-layout"
 
 const execFileAsync = promisify(execFile)
 
-export type PinnedApp = { id: string; name: string; path: string }
+export type PinnedApp = { id: string; name: string; path: string; locked?: boolean }
+
+const C_CONNECT: PinnedApp = { id: C_CONNECT_ID, name: C_CONNECT_NAME, path: C_CONNECT_URL, locked: true }
+
+export function listedPins(stored = readPins()): PinnedApp[] {
+  return [C_CONNECT, ...stored.filter((pin) => pin.id !== C_CONNECT_ID)]
+}
 
 function pinsFile() {
   return path.join(installRoot(), "pinned-apps.json")
@@ -220,7 +227,7 @@ export async function browseForProgram(): Promise<{ ok: true; pins: PinnedApp[];
     stdout = result.stdout
   } catch (error) {
     const failed = error as { code?: number | string; stdout?: string; stderr?: string }
-    if (failed.code === 2 || failed.code === "2") return { ok: true, pins: readPins(), selectedId: "", canceled: true }
+    if (failed.code === 2 || failed.code === "2") return { ok: true, pins: listedPins(), selectedId: "", canceled: true }
     const detail = `${failed.stderr ?? ""}`.trim()
     if (/Choose a program/i.test(detail)) return { ok: false, message: "Choose a program." }
     if (/was not found/i.test(detail)) return { ok: false, message: "That program was not found." }
@@ -235,12 +242,12 @@ export async function browseForProgram(): Promise<{ ok: true; pins: PinnedApp[];
   if (!/^[A-Za-z]:\\[^<>:"|?*\r\n]+\.exe$/i.test(exe)) return { ok: false, message: "Choose a program." }
   const pins = readPins()
   const existing = pins.find((pin) => pin.path.toLowerCase() === exe.toLowerCase())
-  if (existing) return { ok: true, pins, selectedId: existing.id }
+  if (existing) return { ok: true, pins: listedPins(), selectedId: existing.id }
   if (pins.length >= 24) return { ok: false, message: "Remove a program before adding another." }
   const pin = { id: crypto.randomUUID(), name: display.slice(0, 40) || "Program", path: exe }
   const next = [...pins, pin]
   writePins(next)
-  return { ok: true, pins: next, selectedId: pin.id }
+  return { ok: true, pins: listedPins(next), selectedId: pin.id }
 }
 
 function iconFile(id: string) {
@@ -290,6 +297,7 @@ export async function readProgramIcon(id: string): Promise<Buffer | null> {
 }
 
 export function removePin(id: string) {
+  if (id === C_CONNECT_ID) return listedPins()
   const next = readPins().filter((pin) => pin.id !== id)
   writePins(next)
   if (/^[0-9a-f-]{36}$/i.test(id)) {
@@ -299,10 +307,11 @@ export function removePin(id: string) {
       // The icon cache is already gone.
     }
   }
-  return next
+  return listedPins(next)
 }
 
 export async function launchPinned(id: string, screen: string): Promise<LaunchResult> {
+  if (id === C_CONNECT_ID) return launchScreenAddress(screen, C_CONNECT_URL, C_CONNECT_NAME)
   const pin = readPins().find((item) => item.id === id)
   if (!pin) return { ok: false, message: "Choose a program, then tap a screen." }
   return launchProgram(screen, pin.path, pin.name)
