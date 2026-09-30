@@ -35,7 +35,7 @@ const ALLOWED: Record<string, string[]> = {
   "103": ["independent", "full", "close"],
 }
 
-export type LaunchResult = { ok: true; message: string } | { ok: false; message: string }
+export type LaunchResult = { ok: true; message: string; empty?: boolean } | { ok: false; message: string }
 
 export function layoutCommand(computer: string, preset: string) {
   const host = HOSTS[computer]
@@ -427,6 +427,57 @@ export async function setLayoutAddress(computer: string, screen: string, url: st
     return { ok: false, message: "The screen did not open that address." }
   }
   return { ok: false, message: "The screen did not open that address." }
+}
+
+export async function closeLayoutScreen(computer: string, screen: string): Promise<LaunchResult> {
+  const host = HOSTS[computer]
+  const screens = ADDRESS_SCREENS[computer]
+  if (!host || !screens || !screens.includes(screen)) {
+    return { ok: false, message: "That screen is not on this computer." }
+  }
+  const layout = readLayoutState()[computer]
+  if (!layout || layout === "close") return { ok: false, message: "Edge is not open on that screen." }
+  if (process.platform !== "win32") return { ok: false, message: "Run this page on the touchscreen." }
+  const root = path.join(layoutsRoot(host), `computer-${computer}`)
+  const requests = path.join(root, "close-requests")
+  const results = path.join(root, "close-results")
+  const resultFile = path.join(results, `${screen}.txt`)
+  const requestFile = path.join(requests, `${screen}.txt`)
+  try {
+    fs.mkdirSync(requests, { recursive: true })
+    fs.mkdirSync(results, { recursive: true })
+    fs.rmSync(resultFile, { force: true })
+    fs.writeFileSync(`${requestFile}.tmp`, "close", "utf8")
+    fs.renameSync(`${requestFile}.tmp`, requestFile)
+  } catch {
+    return { ok: false, message: `Could not reach the layout on ${host}.` }
+  }
+  const started = Date.now()
+  let sawWorking = false
+  while (Date.now() - started < 20000) {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    let text = ""
+    try {
+      text = fs.readFileSync(resultFile, "utf8").trim()
+    } catch {
+      text = ""
+    }
+    if (!text) {
+      if (!sawWorking && Date.now() - started > 3000) return { ok: false, message: "Edge is not open on that screen." }
+      continue
+    }
+    if (text === "working") {
+      sawWorking = true
+      continue
+    }
+    if (text === "ok" || text === "empty") {
+      const number = screen.replace("TV", "")
+      return { ok: true, empty: text === "empty", message: `Closed Edge on screen ${number}.` }
+    }
+    if (text.startsWith("error ")) return { ok: false, message: text.slice(6) }
+    return { ok: false, message: "Edge did not close." }
+  }
+  return { ok: false, message: "Edge did not close." }
 }
 
 function computerForScreen(screen: string) {
