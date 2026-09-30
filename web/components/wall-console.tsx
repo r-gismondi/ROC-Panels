@@ -182,6 +182,8 @@ export function WallConsole() {
   const coachHold = useRef<PinnedApp | null>(null)
   const dragSession = useRef<{ pointerId: number; id: string; x: number; y: number; dragging: boolean } | null>(null)
   const [drag, setDrag] = useState<{ id: string; x: number; y: number; over: string } | null>(null)
+  const armedRef = useRef("")
+  const launchPin = useRef("")
 
   useEffect(() => {
     if (!SCREENS.some((screen) => screen.id === selection.screen)) setKeyboardOpen(false)
@@ -467,11 +469,26 @@ export function WallConsole() {
     }
   }
 
-  async function closeAllEdge() {
+  function zoneFor(screenId: string) {
+    const computer = COMPUTER_OF[screenId]
+    const layoutId = computer === "101" ? applied[1] : computer === "102" ? applied[2] : computer3Applied
+    const list = computer === "103" ? COMPUTER_3_PRESETS : computer === "101" ? PRESETS[1] : PRESETS[2]
+    const active = list.find((item) => item.id === layoutId)
+    const ids = computer === "103" ? COMPUTER_3_IDS : computer === "101" ? IDS[1] : COMPUTER_2_IDS
+    const group = active?.groups[screenId]
+    const zone = active ? ids.filter((id) => active.groups[id] === group) : [screenId]
+    return { computer, zone }
+  }
+
+  function zoneLabel(zone: string[]) {
+    return zone.length > 1 ? `screens ${zone.map(screenNumber).join(", ")}` : `screen ${screenNumber(zone[0] ?? "")}`
+  }
+
+  async function closeComputers(computers: Array<"101" | "102" | "103">, done: string) {
     if (layoutBusy.current) return
     layoutBusy.current = true
-    setLayoutStatus("Closing Edge on every screen…")
-    const computers = ["101", "102", "103"] as const
+    const where = computers.map((computer) => GROUP_LABEL[computer]).join(" and ")
+    setLayoutStatus(`Closing Edge on ${where}…`)
     try {
       const results = await Promise.all(
         computers.map(async (computer) => {
@@ -485,7 +502,51 @@ export function WallConsole() {
         }),
       )
       const failed = results.filter((item) => !item.ok)
-      setLayoutStatus(failed.length === 0 ? "Closed Edge on every screen." : failed.map((item) => item.text).join(" "))
+      setLayoutStatus(failed.length === 0 ? done : failed.map((item) => item.text).join(" "))
+    } catch {
+      setLayoutStatus("Could not reach the layout service.")
+    } finally {
+      layoutBusy.current = false
+    }
+  }
+
+  async function closeAllEdge() {
+    await closeComputers(["101", "102", "103"], "Closed Edge on every screen.")
+  }
+
+  async function closeSelectedEdge() {
+    if (selection.screen === "all") {
+      if (panel === 1) await closeComputers(["101"], "Closed Edge on screens 1–8.")
+      else await closeComputers(["102", "103"], "Closed Edge on screens 9–18.")
+      return
+    }
+    if (selection.screen === "computer-2") {
+      await closeComputers(["102"], "Closed Edge on screens 9–12 and 14–17.")
+      return
+    }
+    if (selection.screen === "computer-3") {
+      await closeComputers(["103"], "Closed Edge on screens 13 and 18.")
+      return
+    }
+    const screenId = selection.screen
+    const computer = COMPUTER_OF[screenId]
+    if (!computer || layoutBusy.current) return
+    layoutBusy.current = true
+    const { zone } = zoneFor(screenId)
+    const label = zoneLabel(zone)
+    setLayoutStatus(`Closing Edge on ${label}…`)
+    try {
+      const response = await fetch("/api/layout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ computer, preset: "close", screen: screenId }),
+      })
+      const body = (await response.json().catch(() => null)) as { message?: string; error?: string; empty?: boolean } | null
+      if (!response.ok) {
+        setLayoutStatus(body?.error || "Edge did not close.")
+        return
+      }
+      setLayoutStatus(`Closed Edge on ${label}.`)
     } catch {
       setLayoutStatus("Could not reach the layout service.")
     } finally {
@@ -619,9 +680,15 @@ export function WallConsole() {
     }
   }
 
+  function pressScreen() {
+    launchPin.current = armedRef.current
+  }
+
   function choose(next: Selection) {
     setSelection(next)
-    if (/^TV\d+$/.test(next.screen) && armedApp) void openProgram(armedApp, next.screen)
+    const pin = launchPin.current
+    launchPin.current = ""
+    if (/^TV\d+$/.test(next.screen) && pin) void openProgram(pin, next.screen)
   }
 
   function rememberApplied(computer: "101" | "102" | "103", id: string) {
@@ -792,6 +859,7 @@ export function WallConsole() {
     }
   }
 
+  armedRef.current = armedApp
   const armedPin = pins.find((pin) => pin.id === armedApp) ?? null
   if (armedPin) coachHold.current = armedPin
   const coachPin = armedPin ?? coachHold.current
@@ -827,7 +895,7 @@ export function WallConsole() {
           </div>
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
       <section className="flex flex-col gap-3 px-4 py-3 lg:px-6">
         <div className="rounded-2xl border border-cyan-300/40 bg-[#0a2f86]/55 p-3 shadow-[0_0_28px_rgba(40,140,255,0.25)]">
           <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
@@ -911,6 +979,7 @@ export function WallConsole() {
           power={power}
           thumbStamp={thumbStamp}
           onSelect={choose}
+          onPress={pressScreen}
           onOpenRemote={openRemote}
           dropTarget={drag?.over ?? ""}
         />
@@ -949,6 +1018,7 @@ export function WallConsole() {
               thumbStamp={thumbStamp}
               onSelectFrame={() => setSelection({ panel: 2, screen: "computer-2" })}
               onSelectScreen={(screen) => choose({ panel: 2, screen })}
+              onPress={pressScreen}
               onOpenRemote={openRemote}
               dropTarget={drag?.over ?? ""}
             />
@@ -963,6 +1033,7 @@ export function WallConsole() {
               thumbStamp={thumbStamp}
               onSelectFrame={() => setSelection({ panel: 2, screen: "computer-3" })}
               onSelectScreen={(screen) => choose({ panel: 2, screen })}
+              onPress={pressScreen}
               onOpenRemote={openRemote}
               dropTarget={drag?.over ?? ""}
             />
@@ -971,7 +1042,7 @@ export function WallConsole() {
         </div>
       </section>
 
-      <footer className="border-t border-cyan-300/30 px-4 py-3 sm:px-6">
+      <footer className="shrink-0 border-t border-cyan-300/30 px-4 py-3 sm:px-6">
         <PresetRow
           label={footer.label}
           presets={footer.presets}
@@ -1004,15 +1075,15 @@ export function WallConsole() {
             setLayoutStatus(`Canceled the preview on ${footer.target}.`)
           }}
           onClose={() => {
-            void runLayout(footer.computer, "close")
+            void closeSelectedEdge()
           }}
           onCloseAll={() => {
             void closeAllEdge()
           }}
         />
       </footer>
-      <section className="border-t border-cyan-300/30 px-4 py-3 sm:px-6">
-        <div className="flex min-w-0 flex-col gap-4 overflow-x-hidden lg:flex-row lg:items-stretch">
+      <section className="shrink-0 border-t border-cyan-300/30 px-4 py-3 sm:px-6">
+        <div className="flex min-w-0 flex-col gap-4 overflow-hidden lg:flex-row lg:items-stretch">
           <div className="min-w-0 flex-1">
             <div className="mb-2">
               <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">PROGRAMS</p>
@@ -1066,14 +1137,16 @@ export function WallConsole() {
           </div>
           {coachPresence.mounted ? (
             <div
-              className={`min-w-0 overflow-hidden ${coachPresence.visible ? "w-full max-w-full lg:max-w-[34rem]" : "w-0 max-w-0"}`}
+              className={`relative w-full shrink-0 overflow-hidden lg:h-auto lg:self-stretch ${coachPresence.visible ? "h-56 max-w-full lg:max-w-[34rem]" : "h-0 max-w-0"}`}
               style={motionStyle}
             >
-              <div
-                className={`h-full ${coachPresence.visible ? "translate-y-0 scale-100 opacity-100" : "translate-y-4 scale-95 opacity-0"}`}
-                style={motionStyle}
-              >
-                {coachPin ? <DragCoach name={coachPin.name} id={coachPin.id} /> : null}
+              <div className="absolute inset-0 overflow-hidden">
+                <div
+                  className={`h-full ${coachPresence.visible ? "translate-y-0 scale-100 opacity-100" : "translate-y-4 scale-95 opacity-0"}`}
+                  style={motionStyle}
+                >
+                  {coachPin ? <DragCoach name={coachPin.name} id={coachPin.id} /> : null}
+                </div>
               </div>
             </div>
           ) : null}
@@ -1140,6 +1213,7 @@ function PanelFrame({
   power,
   thumbStamp,
   onSelect,
+  onPress,
   onOpenRemote,
   dropTarget,
 }: {
@@ -1152,6 +1226,7 @@ function PanelFrame({
   power: Record<string, boolean>
   thumbStamp: number
   onSelect: (selection: Selection) => void
+  onPress: () => void
   onOpenRemote: (screenId: string) => void
   dropTarget: string
 }) {
@@ -1181,6 +1256,7 @@ function PanelFrame({
         power={power}
         thumbStamp={thumbStamp}
         onSelect={(screen) => onSelect({ panel, screen })}
+        onPress={onPress}
         onOpenRemote={onOpenRemote}
         dropTarget={dropTarget}
       />
@@ -1199,6 +1275,7 @@ function ComputerFrame({
   thumbStamp,
   onSelectFrame,
   onSelectScreen,
+  onPress,
   onOpenRemote,
   dropTarget,
 }: {
@@ -1212,6 +1289,7 @@ function ComputerFrame({
   thumbStamp: number
   onSelectFrame: () => void
   onSelectScreen: (screen: string) => void
+  onPress: () => void
   onOpenRemote: (screenId: string) => void
   dropTarget: string
 }) {
@@ -1231,6 +1309,7 @@ function ComputerFrame({
         power={power}
         thumbStamp={thumbStamp}
         onSelect={onSelectScreen}
+        onPress={onPress}
         onOpenRemote={onOpenRemote}
         dropTarget={dropTarget}
       />
@@ -1245,6 +1324,7 @@ function ScreenWall({
   power,
   thumbStamp,
   onSelect,
+  onPress,
   onOpenRemote,
   dropTarget,
 }: {
@@ -1254,6 +1334,7 @@ function ScreenWall({
   power: Record<string, boolean>
   thumbStamp: number
   onSelect: (screenId: string) => void
+  onPress: () => void
   onOpenRemote: (screenId: string) => void
   dropTarget: string
 }) {
@@ -1276,6 +1357,7 @@ function ScreenWall({
           on={power[screen.id]}
           thumbStamp={thumbStamp}
           onSelect={() => onSelect(screen.id)}
+          onPress={onPress}
           onOpenRemote={() => onOpenRemote(screen.id)}
           dropTarget={dropTarget}
         />
@@ -1324,6 +1406,7 @@ function ScreenButton({
   on,
   thumbStamp,
   onSelect,
+  onPress,
   onOpenRemote,
   dropTarget,
 }: {
@@ -1333,6 +1416,7 @@ function ScreenButton({
   on: boolean
   thumbStamp: number
   onSelect: () => void
+  onPress: () => void
   onOpenRemote: () => void
   dropTarget: string
 }) {
@@ -1344,6 +1428,11 @@ function ScreenButton({
     <button
       type="button"
       data-screen-id={screen.id}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return
+        event.stopPropagation()
+        onPress()
+      }}
       onClick={(event) => {
         event.stopPropagation()
         onSelect()
@@ -1352,7 +1441,7 @@ function ScreenButton({
         event.stopPropagation()
         onOpenRemote()
       }}
-      className="relative aspect-video w-full min-w-0 overflow-hidden rounded-sm border text-center transition-[border-color,box-shadow,background-color] duration-200"
+      className="relative aspect-video w-full min-w-0 touch-manipulation overflow-hidden rounded-sm border text-center transition-[border-color,box-shadow,background-color] duration-200"
       style={{
         borderColor: hot || selected ? "#ffffff" : color,
         background: on ? `${color}33` : "rgba(0,0,0,0.45)",

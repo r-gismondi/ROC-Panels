@@ -79,9 +79,9 @@ export function DragCoach({ name, id }: { name: string; id: string }) {
   }, [])
 
   return (
-    <div className="flex h-full min-h-56 flex-col overflow-hidden rounded-xl border border-cyan-300/80 bg-[#071a4d]/55 shadow-[0_0_24px_rgba(80,200,255,0.16)]">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-cyan-300/80 bg-[#071a4d]/55 shadow-[0_0_24px_rgba(80,200,255,0.16)]">
       <p className="px-3 pt-3 text-[11px] tracking-[0.18em] text-cyan-100/70">DRAG ONTO A SCREEN</p>
-      <div ref={stageRef} className="relative min-h-48 flex-1">
+      <div ref={stageRef} className="relative min-h-0 flex-1">
         <div className="grid grid-cols-4 gap-2 px-4 pt-3">
           {tiles.map((tile) => (
             <div

@@ -519,32 +519,49 @@ $timer.Add_Tick({
 })
 $timer.Start()
 $script:urlBusy = $false
+function New-CdpTimeout([int]$Milliseconds) {
+    $source = New-Object System.Threading.CancellationTokenSource
+    $source.CancelAfter($Milliseconds)
+    return $source
+}
 function Send-CdpMessage($Socket, [string]$Payload) {
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($Payload)
     $segment = New-Object 'System.ArraySegment[byte]' -ArgumentList (, $bytes)
-    $null = $Socket.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).GetAwaiter().GetResult()
+    $cancel = New-CdpTimeout 1500
+    try {
+        $null = $Socket.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, $cancel.Token).GetAwaiter().GetResult()
+    } finally { $cancel.Dispose() }
 }
 function Receive-CdpMessage($Socket) {
     $buffer = New-Object byte[] 131072
     $stream = New-Object System.IO.MemoryStream
-    do {
-        $segment = New-Object 'System.ArraySegment[byte]' -ArgumentList (, $buffer)
-        $result = $Socket.ReceiveAsync($segment, [System.Threading.CancellationToken]::None).GetAwaiter().GetResult()
-        if ($result.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Close) { break }
-        if ($result.Count -gt 0) { [void]$stream.Write($buffer, 0, $result.Count) }
-    } while (-not $result.EndOfMessage)
-    return [System.Text.Encoding]::UTF8.GetString($stream.ToArray())
+    $cancel = New-CdpTimeout 1500
+    try {
+        do {
+            $segment = New-Object 'System.ArraySegment[byte]' -ArgumentList (, $buffer)
+            $result = $Socket.ReceiveAsync($segment, $cancel.Token).GetAwaiter().GetResult()
+            if ($result.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Close) { break }
+            if ($result.Count -gt 0) { [void]$stream.Write($buffer, 0, $result.Count) }
+        } while (-not $result.EndOfMessage)
+        return [System.Text.Encoding]::UTF8.GetString($stream.ToArray())
+    } finally { $cancel.Dispose() }
 }
 function Open-CdpSocket([string]$Url) {
     $socket = New-Object System.Net.WebSockets.ClientWebSocket
-    $socket.ConnectAsync([Uri]$Url, [System.Threading.CancellationToken]::None).GetAwaiter().GetResult() | Out-Null
-    return $socket
+    $cancel = New-CdpTimeout 1500
+    try {
+        $socket.ConnectAsync([Uri]$Url, $cancel.Token).GetAwaiter().GetResult() | Out-Null
+        return $socket
+    } catch {
+        try { $socket.Dispose() } catch {}
+        throw
+    } finally { $cancel.Dispose() }
 }
 function Invoke-Cdp($Socket, [int]$Id, [string]$Method, $Params) {
     $body = @{ id = $Id; method = $Method }
     if ($null -ne $Params) { $body.params = $Params }
     Send-CdpMessage $Socket ($body | ConvertTo-Json -Compress -Depth 6)
-    $deadline = (Get-Date).AddSeconds(5)
+    $deadline = (Get-Date).AddSeconds(2)
     while ((Get-Date) -lt $deadline) {
         $text = Receive-CdpMessage $Socket
         if (-not $text) { continue }
@@ -569,7 +586,9 @@ function Find-ZonePage($Hwnd) {
         $socket = Open-CdpSocket $version.webSocketDebuggerUrl
         $id = 1
         $hits = @()
+        $searchDeadline = (Get-Date).AddSeconds(4)
         foreach ($target in $list) {
+            if ((Get-Date) -gt $searchDeadline) { break }
             if ($target.type -ne 'page' -or $target.url -like 'devtools://*') { continue }
             $id++
             $reply = Invoke-Cdp $socket $id 'Browser.getWindowForTarget' @{ targetId = [string]$target.id }
@@ -601,23 +620,26 @@ function Open-ZonePage($Target, [string]$Url) {
     }
 }
 function Start-ZoneEdge([string]$Url, [string]$Screen) {
-    $profile = Join-Path $root ("edge-profiles\" + $Screen)
-    New-Item -ItemType Directory -Force -Path $profile | Out-Null
+    $profileDir = Join-Path $root ("edge-profiles\" + $Screen)
+    New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
+    $seen = @{}
+    foreach ($existing in @([PanelWin]::VisibleWindows())) { $seen[$existing.ToInt64()] = $true }
+    foreach ($existing in @($known.Keys)) { $seen[[int64]$existing] = $true }
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
-    $startInfo.Arguments = "--user-data-dir=`"$profile`" --no-first-run --no-default-browser-check --disable-sync --disable-features=Windows10CustomTitlebar --app=`"$Url`" --new-window"
+    $startInfo.Arguments = "--user-data-dir=`"$profileDir`" --no-first-run --no-default-browser-check --disable-sync --disable-features=Windows10CustomTitlebar --app=`"$Url`" --new-window"
     $startInfo.UseShellExecute = $true
     $started = New-Object System.Diagnostics.Process
     $started.StartInfo = $startInfo
     [void]$started.Start()
-    $deadline = (Get-Date).AddSeconds(25)
+    $deadline = (Get-Date).AddSeconds(12)
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Milliseconds 300
         foreach ($candidate in @([PanelWin]::VisibleWindows())) {
+            if ($seen.ContainsKey($candidate.ToInt64())) { continue }
             $procId = [int][PanelWin]::PidOf($candidate)
             $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $procId" -ErrorAction SilentlyContinue
             if (-not $proc -or $proc.Name -ne 'msedge.exe') { continue }
-            if ($proc.CommandLine -notlike "*$profile*") { continue }
             if (-not [PanelWin]::TextOf($candidate)) { continue }
             return $candidate
         }
@@ -829,6 +851,63 @@ $appTimer.Add_Tick({
     } catch {}
 })
 $appTimer.Start()
+function Close-OpenedZone($Item) {
+    $Item | Add-Member -NotePropertyName Closed -NotePropertyValue $true -Force
+    $script:opened = @($script:opened | Where-Object { -not $_.Closed })
+    try { [void]$known.Remove($Item.Hwnd.ToInt64()) } catch {}
+    Save-ZoneHwnds
+    try { if ($Item.Hwnd -and $Item.Hwnd -ne [IntPtr]::Zero) { [void][PanelWin]::CloseWindow($Item.Hwnd) } } catch {}
+    try { if ($Item.Host -and $Item.Host -ne [IntPtr]::Zero) { [void][PanelWin]::CloseWindow($Item.Host) } } catch {}
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $root "close-requests") | Out-Null
+$closeTimer = New-Object System.Windows.Forms.Timer
+$closeTimer.Interval = 200
+$closeTimer.Add_Tick({
+    if ($script:urlBusy) { return }
+    try {
+        $dir = Join-Path $root "close-requests"
+        $pending = @(Get-ChildItem -LiteralPath $dir -Filter *.txt -ErrorAction SilentlyContinue | Sort-Object Name)
+        if ($pending.Count -eq 0) { return }
+        $request = $pending[0]
+        $screen = [System.IO.Path]::GetFileNameWithoutExtension($request.Name)
+        $resultDir = Join-Path $root "close-results"
+        New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+        $resultPath = Join-Path $resultDir ($screen + ".txt")
+        Remove-Item -LiteralPath $request.FullName -Force -ErrorAction SilentlyContinue
+        $script:urlBusy = $true
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        try {
+            $validScreen = $screen -match '^TV([1-9]|1[0-8])$'
+            if (-not $validScreen) {
+                [System.IO.File]::WriteAllText($resultPath, "error That screen is not in this layout.", $utf8)
+                return
+            }
+            $match = $null
+            foreach ($item in @($script:opened)) {
+                $names = @($item.Title -split '\s+')
+                if ($item.Title -eq "All" -or ($names -contains $screen)) {
+                    $match = $item
+                    break
+                }
+            }
+            if (-not $match) {
+                [System.IO.File]::WriteAllText($resultPath, "error That screen is not open in this layout.", $utf8)
+                return
+            }
+            $empty = @($script:opened).Count -le 1
+            [System.IO.File]::WriteAllText($resultPath, $(if ($empty) { "empty" } else { "ok" }), $utf8)
+            Close-OpenedZone $match
+        } catch {
+            $reason = $_.Exception.Message
+            if (-not $reason) { $reason = "Edge did not close." }
+            $reason = ($reason -replace '[\r\n]+', ' ')
+            [System.IO.File]::WriteAllText($resultPath, "error $reason", $utf8)
+        } finally {
+            $script:urlBusy = $false
+        }
+    } catch {}
+})
+$closeTimer.Start()
 Write-Output "Opened $($opened.Count) pages. Leave this window open. Edge-Close.bat closes them."
 [System.Windows.Forms.Application]::Run()
 exit 0
