@@ -388,7 +388,7 @@ foreach ($zone in $presets[$Preset]) {
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
     $zoneUrl = Get-ZoneUrl $zone.Title
-    $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --app=`"$zoneUrl`" --new-window"
+    $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --remote-debugging-port=9333 --remote-allow-origins=* --app=`"$zoneUrl`" --new-window"
     $startInfo.UseShellExecute = $true
     $started = New-Object System.Diagnostics.Process
     $started.StartInfo = $startInfo
@@ -519,6 +519,111 @@ $timer.Add_Tick({
 })
 $timer.Start()
 $script:urlBusy = $false
+function Send-CdpMessage($Socket, [string]$Payload) {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Payload)
+    $segment = New-Object 'System.ArraySegment[byte]' -ArgumentList (, $bytes)
+    $null = $Socket.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).GetAwaiter().GetResult()
+}
+function Receive-CdpMessage($Socket) {
+    $buffer = New-Object byte[] 131072
+    $stream = New-Object System.IO.MemoryStream
+    do {
+        $segment = New-Object 'System.ArraySegment[byte]' -ArgumentList (, $buffer)
+        $result = $Socket.ReceiveAsync($segment, [System.Threading.CancellationToken]::None).GetAwaiter().GetResult()
+        if ($result.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Close) { break }
+        if ($result.Count -gt 0) { [void]$stream.Write($buffer, 0, $result.Count) }
+    } while (-not $result.EndOfMessage)
+    return [System.Text.Encoding]::UTF8.GetString($stream.ToArray())
+}
+function Open-CdpSocket([string]$Url) {
+    $socket = New-Object System.Net.WebSockets.ClientWebSocket
+    $socket.ConnectAsync([Uri]$Url, [System.Threading.CancellationToken]::None).GetAwaiter().GetResult() | Out-Null
+    return $socket
+}
+function Invoke-Cdp($Socket, [int]$Id, [string]$Method, $Params) {
+    $body = @{ id = $Id; method = $Method }
+    if ($null -ne $Params) { $body.params = $Params }
+    Send-CdpMessage $Socket ($body | ConvertTo-Json -Compress -Depth 6)
+    $deadline = (Get-Date).AddSeconds(5)
+    while ((Get-Date) -lt $deadline) {
+        $text = Receive-CdpMessage $Socket
+        if (-not $text) { continue }
+        $message = $text | ConvertFrom-Json
+        if ($message.id -eq $Id) { return $message }
+    }
+    return $null
+}
+function Find-ZonePage($Hwnd) {
+    $text = [PanelWin]::RectOf($Hwnd)
+    if ($text -notmatch '^(-?\d+),(-?\d+)\s+(\d+)x(\d+)$') { return $null }
+    $left = [int]$Matches[1]
+    $top = [int]$Matches[2]
+    $width = [int]$Matches[3]
+    $height = [int]$Matches[4]
+    try {
+        $version = Invoke-RestMethod -Uri 'http://127.0.0.1:9333/json/version' -TimeoutSec 2
+        $list = @(Invoke-RestMethod -Uri 'http://127.0.0.1:9333/json/list' -TimeoutSec 2)
+    } catch { return $null }
+    $socket = $null
+    try {
+        $socket = Open-CdpSocket $version.webSocketDebuggerUrl
+        $id = 1
+        $hits = @()
+        foreach ($target in $list) {
+            if ($target.type -ne 'page' -or $target.url -like 'devtools://*') { continue }
+            $id++
+            $reply = Invoke-Cdp $socket $id 'Browser.getWindowForTarget' @{ targetId = [string]$target.id }
+            if (-not $reply -or -not $reply.result) { continue }
+            $bounds = $reply.result.bounds
+            if (-not $bounds) { continue }
+            $close = [Math]::Abs([double]$bounds.left - $left) -le 48 -and [Math]::Abs([double]$bounds.top - $top) -le 48 -and [Math]::Abs([double]$bounds.width - $width) -le 64 -and [Math]::Abs([double]$bounds.height - $height) -le 64
+            if ($close) { $hits += $target }
+        }
+        if ($hits.Count -eq 1) { return $hits[0] }
+    } catch {
+        return $null
+    } finally {
+        if ($socket) { try { $socket.Dispose() } catch {} }
+    }
+    return $null
+}
+function Open-ZonePage($Target, [string]$Url) {
+    $socket = $null
+    try {
+        $socket = Open-CdpSocket $Target.webSocketDebuggerUrl
+        $reply = Invoke-Cdp $socket 1 'Page.navigate' @{ url = $Url }
+        if (-not $reply -or $reply.error) { return $false }
+        return $true
+    } catch {
+        return $false
+    } finally {
+        if ($socket) { try { $socket.Dispose() } catch {} }
+    }
+}
+function Start-ZoneEdge([string]$Url, [string]$Screen) {
+    $profile = Join-Path $root ("edge-profiles\" + $Screen)
+    New-Item -ItemType Directory -Force -Path $profile | Out-Null
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $edge
+    $startInfo.Arguments = "--user-data-dir=`"$profile`" --no-first-run --no-default-browser-check --disable-sync --disable-features=Windows10CustomTitlebar --app=`"$Url`" --new-window"
+    $startInfo.UseShellExecute = $true
+    $started = New-Object System.Diagnostics.Process
+    $started.StartInfo = $startInfo
+    [void]$started.Start()
+    $deadline = (Get-Date).AddSeconds(25)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 300
+        foreach ($candidate in @([PanelWin]::VisibleWindows())) {
+            $procId = [int][PanelWin]::PidOf($candidate)
+            $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $procId" -ErrorAction SilentlyContinue
+            if (-not $proc -or $proc.Name -ne 'msedge.exe') { continue }
+            if ($proc.CommandLine -notlike "*$profile*") { continue }
+            if (-not [PanelWin]::TextOf($candidate)) { continue }
+            return $candidate
+        }
+    }
+    return [IntPtr]::Zero
+}
 New-Item -ItemType Directory -Force -Path (Join-Path $root "url-requests") | Out-Null
 $urlTimer = New-Object System.Windows.Forms.Timer
 $urlTimer.Interval = 200
@@ -562,36 +667,23 @@ $urlTimer.Add_Tick({
                 return
             }
             [System.IO.File]::WriteAllText($resultPath, "working", $utf8)
-            $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-            $startInfo.FileName = $edge
-            $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --app=`"$url`" --new-window"
-            $startInfo.UseShellExecute = $true
-            $started = New-Object System.Diagnostics.Process
-            $started.StartInfo = $startInfo
-            [void]$started.Start()
-            $hwnd = [IntPtr]::Zero
-            $deadline = (Get-Date).AddSeconds(25)
-            while ((Get-Date) -lt $deadline -and $hwnd -eq [IntPtr]::Zero) {
-                Start-Sleep -Milliseconds 300
-                foreach ($candidate in @(Get-EdgeHwnds)) {
-                    if (-not $known.ContainsKey($candidate.ToInt64())) {
-                        $hwnd = $candidate
-                        $known[$candidate.ToInt64()] = $true
-                        break
-                    }
+            $page = Find-ZonePage $match.Hwnd
+            $openedPage = $page -and (Open-ZonePage $page $url)
+            if (-not $openedPage) {
+                $hwnd = Start-ZoneEdge $url $screen
+                if ($hwnd -eq [IntPtr]::Zero) {
+                    [System.IO.File]::WriteAllText($resultPath, "error Edge did not open that address.", $utf8)
+                    return
                 }
+                $match.Kind = "edge"
+                [void][PanelWin]::ShowWindow($match.Host, 9)
+                [void][PanelWin]::Place($hwnd, $match.X, $match.Y, $match.W, $match.H)
+                [void][PanelWin]::Fit($hwnd, $match.Host, $match.X, $match.Y, $match.W, $match.H)
+                [void][PanelWin]::CloseWindow($match.Hwnd)
+                [void]$known.Remove($match.Hwnd.ToInt64())
+                $match.Hwnd = $hwnd
+                $known[$hwnd.ToInt64()] = $true
             }
-            if ($hwnd -eq [IntPtr]::Zero) {
-                [System.IO.File]::WriteAllText($resultPath, "error Edge did not open that address.", $utf8)
-                return
-            }
-            $match.Kind = "edge"
-            [void][PanelWin]::ShowWindow($match.Host, 9)
-            [void][PanelWin]::Place($hwnd, $match.X, $match.Y, $match.W, $match.H)
-            [void][PanelWin]::Fit($hwnd, $match.Host, $match.X, $match.Y, $match.W, $match.H)
-            [void][PanelWin]::CloseWindow($match.Hwnd)
-            [void]$known.Remove($match.Hwnd.ToInt64())
-            $match.Hwnd = $hwnd
             $ids = foreach ($item in $opened) { $item.Hwnd.ToInt64().ToString() }
             Set-Content -LiteralPath $hwndFile -Value $ids -Encoding Ascii
             $saveDir = Join-Path $root "addresses"
