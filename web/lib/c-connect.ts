@@ -8,5 +8,5 @@ export function programIconSrc(id: string) {
 }
 
 export function programIconClass(id: string) {
-  return id === C_CONNECT_ID ? "h-6 w-12 shrink-0 object-contain" : "h-6 w-6 shrink-0 object-contain"
+  return id === C_CONNECT_ID ? "h-6 w-6 shrink-0 rounded-full object-cover" : "h-6 w-6 shrink-0 object-contain"
 }
