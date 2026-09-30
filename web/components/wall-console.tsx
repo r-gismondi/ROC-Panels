@@ -194,6 +194,17 @@ export function WallConsole() {
   }, [selection])
 
   useEffect(() => {
+    if (!armedApp) return
+    function cancelArmed(event: PointerEvent) {
+      const target = event.target
+      if (target instanceof Element && (target.closest("[data-screen-id]") || target.closest("[data-program-id]"))) return
+      setArmedApp("")
+    }
+    window.addEventListener("pointerdown", cancelArmed)
+    return () => window.removeEventListener("pointerdown", cancelArmed)
+  }, [armedApp])
+
+  useEffect(() => {
     return () => {
       if (brightnessTimer.current) clearTimeout(brightnessTimer.current)
     }
@@ -1018,7 +1029,7 @@ export function WallConsole() {
                   programStatus
                     ? programStatus
                     : armedApp
-                      ? "Tap a screen, or drag the program onto it. The program replaces that layout group. Use Independent for one screen."
+                      ? "Tap a screen to open it there. Tap anywhere else to cancel."
                       : "Browse for a program, then tap a screen or drag it onto one."
                 }
                 className="text-xs text-cyan-100/80"
@@ -1032,6 +1043,7 @@ export function WallConsole() {
                 <div key={pin.id} className="flex shrink-0">
                   <button
                     type="button"
+                    data-program-id={pin.id}
                     {...programPointer(pin.id)}
                     className={`flex min-h-11 max-w-56 cursor-grab touch-none items-center gap-2 rounded-l-lg border border-r-0 px-3 text-sm tracking-wide select-none active:cursor-grabbing ${
                       armedApp === pin.id
