@@ -911,7 +911,7 @@ export function WallConsole() {
           ) : null}
         </div>
 
-        <div className="grid min-h-0 flex-1 items-stretch gap-4 lg:grid-cols-[4fr_5fr]">
+        <div className="grid items-start gap-4 lg:grid-cols-[4fr_5fr]">
         <PanelFrame
           panel={1}
           title="Panel 1"
@@ -946,11 +946,11 @@ export function WallConsole() {
             </span>
           </div>
           <div
-            className="flex min-h-0 w-full flex-1 items-stretch justify-center gap-2 [container-type:inline-size]"
+            className="flex w-full items-start justify-center gap-2 [container-type:inline-size]"
             style={{ ["--pad" as string]: "1.25rem", ["--seam" as string]: "4px", ["--tile" as string]: "max(0px, calc((100cqi - 4 * var(--pad) - 0.5rem - 3 * var(--seam)) / 5))" }}
           >
             <ComputerFrame
-              className="h-full shrink-0"
+              className="shrink-0"
               style={{ width: "calc(4 * var(--tile) + 3 * var(--seam) + 2 * var(--pad))" }}
               rows={COMPUTER_2}
               preset={computer2Preset}
@@ -964,7 +964,7 @@ export function WallConsole() {
               dropTarget={drag?.over ?? ""}
             />
             <ComputerFrame
-              className="h-full shrink-0"
+              className="shrink-0"
               style={{ width: "calc(var(--tile) + 2 * var(--pad))" }}
               rows={COMPUTER_3}
               preset={activeComputer3Preset}
@@ -1235,7 +1235,7 @@ function ComputerFrame({
         onSelectFrame()
       }}
       style={style}
-      className={`flex h-full min-h-0 min-w-0 flex-col rounded-xl border ${className} ${selected ? "border-white bg-white/5" : "border-cyan-300/35"}`}
+      className={`flex min-w-0 flex-col rounded-xl border ${className} ${selected ? "border-white bg-white/5" : "border-cyan-300/35"}`}
     >
       <ScreenWall
         rows={rows}
@@ -1274,7 +1274,7 @@ function ScreenWall({
   const rowCount = rows.length
   return (
     <div
-      className="grid h-full min-h-0 w-full flex-1 content-center gap-1 p-5"
+      className="grid w-full gap-1 p-5"
       style={{
         gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
         gridTemplateRows: `repeat(${rowCount}, auto)`,
