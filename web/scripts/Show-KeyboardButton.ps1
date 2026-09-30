@@ -298,7 +298,6 @@ $keyboard.TopMost = $true
 $keyboard.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
 $keyboard.BackColor = $panelBg
 $keyboard.Text = "VNC Keyboard"
-$keyboard.Opacity = 0
 $keyboard.Visible = $false
 $keyboard.Add_HandleCreated({ [VncKeyboardWin]::NoActivate($keyboard.Handle) })
 $keyboardWidth = [Math]::Min(1040, $area.Width - 80)
@@ -396,7 +395,7 @@ $shiftButton = New-Key "Shift" { $script:shift = -not $script:shift; Update-Shif
 $spaceButton = New-Key "Space" { [VncKeyboardWin]::Tap([uint16]0x20, $false) } 12
 $backButton = New-Key "Backspace" { [VncKeyboardWin]::Tap([uint16]0x08, $false) } 12
 $enterButton = New-Key "Enter" { [VncKeyboardWin]::Tap([uint16]0x0D, $false) } 12
-$hideButton = New-Key "Hide keyboard" { Hide-KeyboardPanel } 12
+$hideButton = New-Key "Hide keyboard" { $keyboard.Hide() } 12
 foreach ($action in @($windowsButton, $shiftButton, $spaceButton, $backButton, $enterButton, $hideButton)) {
     $keyboard.Controls.Add($action)
 }
@@ -451,39 +450,6 @@ function Update-KeyboardLayout {
 $keyboard.Add_Resize({ Update-KeyboardLayout })
 Update-KeyboardLayout
 
-function Start-PanelFade([System.Windows.Forms.Form]$form, [bool]$show) {
-    if ($script:keyboardFade) {
-        $script:keyboardFade.Stop()
-        $script:keyboardFade.Dispose()
-        $script:keyboardFade = $null
-    }
-    if ($show -and -not $form.Visible) {
-        $form.Opacity = 0
-        $form.Show()
-    }
-    $timer = New-Object System.Windows.Forms.Timer
-    $timer.Interval = 16
-    $script:keyboardFade = $timer
-    $opening = $show
-    $timer.Add_Tick({
-        if ($form.IsDisposed) { $timer.Stop(); return }
-        if ($opening) {
-            $form.Opacity = [Math]::Min(1, $form.Opacity + 0.12)
-            if ($form.Opacity -ge 0.999) { $timer.Stop() }
-        } else {
-            $form.Opacity = [Math]::Max(0, $form.Opacity - 0.14)
-            if ($form.Opacity -le 0.001) {
-                $timer.Stop()
-                $form.Hide()
-                $form.Opacity = 0
-            }
-        }
-    }.GetNewClosure())
-    $timer.Start()
-}
-
-function Hide-KeyboardPanel { Start-PanelFade $keyboard $false }
-
 function Show-KeyboardPanel {
     Get-Process -Name osk -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     if (-not $script:keyboardPlaced) {
@@ -495,9 +461,11 @@ function Show-KeyboardPanel {
         $keyboard.Bounds = New-Object System.Drawing.Rectangle $x, $y, $width, $height
         $script:keyboardPlaced = $true
     }
-    Start-PanelFade $keyboard $true
+    $keyboard.Opacity = 1
+    $keyboard.Show()
     $keyboard.TopMost = $true
     [VncKeyboardWin]::StayOnTop($keyboard.Handle)
+    [VncKeyboardWin]::StayOnTop($buttonForm.Handle)
     Update-KeyboardLayout
 }
 
@@ -510,7 +478,7 @@ function Move-KeyboardIcon {
     $cursor = [System.Windows.Forms.Cursor]::Position
     $dx = $cursor.X - $script:iconCursor.X
     $dy = $cursor.Y - $script:iconCursor.Y
-    if (-not $script:iconMoved -and [Math]::Abs($dx) -lt 8 -and [Math]::Abs($dy) -lt 8) { return }
+    if (-not $script:iconMoved -and [Math]::Abs($dx) -lt 24 -and [Math]::Abs($dy) -lt 24) { return }
     $script:iconMoved = $true
     $x = $script:iconOrigin.X + $dx
     $y = $script:iconOrigin.Y + $dy
@@ -538,7 +506,7 @@ $icon.Add_MouseUp({
     $script:iconDown = $false
     $icon.Capture = $false
     if ($dragged) { return }
-    if ($keyboard.Visible) { Hide-KeyboardPanel } else { Show-KeyboardPanel }
+    if ($keyboard.Visible) { $keyboard.Hide() } else { Show-KeyboardPanel }
 })
 
 $script:previewMode = [bool]$Preview

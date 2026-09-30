@@ -214,38 +214,6 @@ $script:seenSession = $false
 $script:misses = 0
 $script:leaving = $false
 $script:startedAt = Get-Date
-$script:zooming = $false
-$script:zoomTimer = $null
-$script:frame = $null
-
-function Start-ViewerZoom($hwnd, $x0, $y0, $w0, $h0, $x1, $y1, $w1, $h1) {
-    if ($script:zoomTimer) {
-        $script:zoomTimer.Stop()
-        $script:zoomTimer.Dispose()
-    }
-    $script:zooming = $true
-    $step = 0
-    $steps = 14
-    $script:zoomTimer = New-Object System.Windows.Forms.Timer
-    $script:zoomTimer.Interval = 16
-    $script:zoomTimer.Add_Tick({
-        $step++
-        $t = [Math]::Min(1, $step / $steps)
-        $e = 1 - [Math]::Pow(1 - $t, 3)
-        $w = [int]($w0 + ($w1 - $w0) * $e)
-        $h = [int]($h0 + ($h1 - $h0) * $e)
-        $x = [int]($x0 + ($x1 - $x0) * $e)
-        $y = [int]($y0 + ($y1 - $y0) * $e)
-        if ([VncHostWin]::IsWindow($hwnd)) { [void][VncHostWin]::Place($hwnd, $x, $y, $w, $h, $false) }
-        if ($t -ge 1) {
-            $script:zoomTimer.Stop()
-            $script:zoomTimer.Dispose()
-            $script:zoomTimer = $null
-            $script:zooming = $false
-        }
-    }.GetNewClosure())
-    $script:zoomTimer.Start()
-}
 
 function Get-VncWindows {
     $rows = @()
@@ -327,7 +295,6 @@ $form.BackColor = $navy
 $form.ForeColor = [System.Drawing.Color]::White
 $form.Bounds = New-Object System.Drawing.Rectangle $area.X, $area.Y, $area.Width, $barHeight
 $form.Text = "VNC session"
-$form.Opacity = 0
 
 $accent = New-Object System.Windows.Forms.Panel
 $accent.Dock = [System.Windows.Forms.DockStyle]::Bottom
@@ -363,34 +330,9 @@ $close.Add_Click({
     if ($script:leaving) { return }
     $script:leaving = $true
     try { $timer.Stop() } catch {}
-    if ($script:zoomTimer) { try { $script:zoomTimer.Stop() } catch {} }
-    $script:zooming = $false
-    $hwnd = $script:sessionHwnd
-    $frame = $script:frame
-    $step = 0
-    $fade = New-Object System.Windows.Forms.Timer
-    $fade.Interval = 16
-    $fade.Add_Tick({
-        $step++
-        $t = [Math]::Min(1, $step / 10)
-        if (-not $form.IsDisposed) { $form.Opacity = 1 - $t }
-        if ($frame -and $hwnd -ne [IntPtr]::Zero -and [VncHostWin]::IsWindow($hwnd)) {
-            $scale = 1 - (0.1 * $t)
-            $w = [Math]::Max(40, [int]($frame.W * $scale))
-            $h = [Math]::Max(40, [int]($frame.H * $scale))
-            $x = [int]($frame.X + (($frame.W - $w) / 2))
-            $y = [int]($frame.Y + (($frame.H - $h) / 2))
-            [void][VncHostWin]::Place($hwnd, $x, $y, $w, $h, $false)
-        }
-        if ($t -ge 1) {
-            $fade.Stop()
-            $fade.Dispose()
-            try { $form.Hide() } catch {}
-            try { Close-Viewer } catch {}
-            try { $form.Close() } catch {}
-        }
-    }.GetNewClosure())
-    $fade.Start()
+    $form.Hide()
+    try { Close-Viewer } catch {}
+    $form.Close()
 })
 
 $form.Add_FormClosing({
@@ -448,21 +390,9 @@ $timer.Add_Tick({
             $script:seenSession = $true
             $script:misses = 0
             $script:sessionHwnd = $session.Hwnd
-            $script:frame = @{ X = $contentX; Y = $contentY; W = $contentW; H = $contentH }
             $restyle = $script:styledHwnd -ne $session.Hwnd
-            $placed = $false
-            if (-not $script:zooming -and $restyle) {
-                $fromW = [Math]::Max(80, [int]($contentW * 0.88))
-                $fromH = [Math]::Max(80, [int]($contentH * 0.88))
-                $fromX = $contentX + [int](($contentW - $fromW) / 2)
-                $fromY = $contentY + [int](($contentH - $fromH) / 2)
-                $placed = [VncHostWin]::Place($session.Hwnd, $fromX, $fromY, $fromW, $fromH, $true)
-                $script:styledHwnd = $session.Hwnd
-                Start-ViewerZoom $session.Hwnd $fromX $fromY $fromW $fromH $contentX $contentY $contentW $contentH
-            } elseif (-not $script:zooming) {
-                $placed = [VncHostWin]::Place($session.Hwnd, $contentX, $contentY, $contentW, $contentH, $false)
-                $script:styledHwnd = $session.Hwnd
-            }
+            $placed = [VncHostWin]::Place($session.Hwnd, $contentX, $contentY, $contentW, $contentH, $restyle)
+            $script:styledHwnd = $session.Hwnd
             if ($placed) {
                 foreach ($keyboardTitle in @("VNC Keyboard", "Keyboard")) {
                     $keyboardHwnd = [VncHostWin]::FindTitle($keyboardTitle)
@@ -508,16 +438,6 @@ $timer.Add_Tick({
 
 $form.Add_Shown({
     $timer.Start()
-    $barStep = 0
-    $barFade = New-Object System.Windows.Forms.Timer
-    $barFade.Interval = 16
-    $barFade.Add_Tick({
-        $barStep++
-        if ($form.IsDisposed) { $barFade.Stop(); return }
-        $form.Opacity = [Math]::Min(1, $barStep / 12)
-        if ($barStep -ge 12) { $barFade.Stop(); $barFade.Dispose(); $form.Opacity = 1 }
-    }.GetNewClosure())
-    $barFade.Start()
     $existing = @(Get-VncWindows | Where-Object { $_.Title -like "*$($script:Address)*" -and $_.Title -ne "RealVNC Viewer" })
     if ($existing.Count -gt 0) { return }
     try { Start-Viewer } catch { $title.Text = $_.Exception.Message }
