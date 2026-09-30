@@ -178,22 +178,10 @@ export function WallConsole() {
   const layoutBusy = useRef(false)
   const launchLock = useRef(false)
   const brightnessTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const controlRef = useRef<HTMLDivElement>(null)
   const screenHold = useRef<Screen | undefined>(undefined)
   const coachHold = useRef<PinnedApp | null>(null)
   const dragSession = useRef<{ pointerId: number; id: string; x: number; y: number; dragging: boolean } | null>(null)
   const [drag, setDrag] = useState<{ id: string; x: number; y: number; over: string } | null>(null)
-  const [controlHeight, setControlHeight] = useState<number>()
-
-  useEffect(() => {
-    const control = controlRef.current
-    if (!control) return
-    const measure = () => setControlHeight(control.offsetHeight)
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(control)
-    return () => observer.disconnect()
-  }, [])
 
   useEffect(() => {
     if (!SCREENS.some((screen) => screen.id === selection.screen)) setKeyboardOpen(false)
@@ -851,7 +839,79 @@ export function WallConsole() {
           </div>
       </header>
 
-      <section className="grid items-start gap-4 px-4 py-4 lg:grid-cols-[4fr_minmax(16rem,18rem)_5fr] lg:px-6">
+      <section className="flex min-h-0 flex-1 flex-col gap-3 px-4 py-3 lg:px-6">
+        <div className="rounded-2xl border border-cyan-300/40 bg-[#0a2f86]/55 p-3 shadow-[0_0_28px_rgba(40,140,255,0.25)]">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            <div className="min-w-64 flex-[1.2] basis-64">
+              <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{scopeLabel}</p>
+              <h1 className="mt-0.5 line-clamp-2 text-2xl font-semibold leading-tight tracking-wide">{scopeTitle}</h1>
+              <p className="mt-1 line-clamp-2 text-sm leading-5 text-cyan-100/80">{scopeDetail}</p>
+            </div>
+
+            <div className="grid w-52 shrink-0 grid-cols-2 gap-2">
+              <GlowButton active={allOn} onClick={() => applyPower(true)}>
+                On
+              </GlowButton>
+              <GlowButton active={allOff} tone="alert" onClick={() => applyPower(false)}>
+                Off
+              </GlowButton>
+            </div>
+
+            <div className="min-w-56 flex-1 basis-56">
+              <div className="mb-2 flex items-baseline justify-between text-sm">
+                <span>Brightness</span>
+                <span className="text-cyan-100 tabular-nums">{sameBrightness ? `${shownBrightness}%` : "Mixed"}</span>
+              </div>
+              <Slider
+                min={0}
+                max={100}
+                value={[shownBrightness]}
+                onValueChange={(value) => applyBrightness(Array.isArray(value) ? value[0] : value)}
+                aria-label="Brightness"
+              />
+            </div>
+
+            <div className="min-w-56 flex-1 basis-64">
+              <p className={`text-xs leading-5 text-cyan-100/80 ${current ? "invisible" : ""}`} aria-hidden={Boolean(current)}>
+                Tap one screen to type its address.
+              </p>
+              <StatusLine text={layoutStatus} className="line-clamp-2 min-h-10 text-xs leading-5 text-cyan-100" />
+            </div>
+          </div>
+
+          {addressPresence.mounted && addressScreen ? (
+            <div className={`grid ${addressPresence.visible ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`} style={motionStyle}>
+              <div className="overflow-hidden">
+                <div className="mt-3 flex flex-wrap items-end gap-3 border-t border-cyan-300/25 pt-3">
+                  <div className="min-w-64 flex-1">
+                    <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">ADDRESS</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setKeyboardOpen(true)
+                        setReplaceAddress(true)
+                      }}
+                      className={`mt-2 w-full rounded-lg border px-3 py-2 text-left ${
+                        keyboardOpen && replaceAddress ? "border-white bg-white/10" : "border-cyan-300/40 bg-[#08245f]/80"
+                      }`}
+                    >
+                      <span className="block truncate text-sm leading-5">{addressValue || "Tap to type an address"}</span>
+                    </button>
+                    <p className="mt-2 line-clamp-2 text-xs leading-5 text-cyan-100/80">
+                      {zoneDetail(shownZone)}
+                      {previewPending ? " Confirm the layout preview, then set the address." : ""}
+                    </p>
+                  </div>
+                  <GlowButton active onClick={() => void runAddress()}>
+                    Open address
+                  </GlowButton>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="grid min-h-0 flex-1 items-stretch gap-4 lg:grid-cols-[4fr_5fr]">
         <PanelFrame
           panel={1}
           title="Panel 1"
@@ -864,86 +924,17 @@ export function WallConsole() {
           onSelect={choose}
           onOpenRemote={openRemote}
           dropTarget={drag?.over ?? ""}
-          height={controlHeight}
         />
-
-        <div className="flex flex-col gap-4 rounded-2xl border border-cyan-300/40 bg-[#0a2f86]/55 p-4 shadow-[0_0_28px_rgba(40,140,255,0.25)]">
-            <div ref={controlRef} className="flex flex-col gap-4">
-              <div>
-                <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{scopeLabel}</p>
-                <h1 className="mt-1 line-clamp-2 h-[4.5rem] text-3xl font-semibold leading-9 tracking-wide">{scopeTitle}</h1>
-                <p className="mt-1 line-clamp-3 h-[3.75rem] text-sm leading-5 text-cyan-100/80">{scopeDetail}</p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <GlowButton active={allOn} onClick={() => applyPower(true)}>
-                  On
-                </GlowButton>
-                <GlowButton active={allOff} tone="alert" onClick={() => applyPower(false)}>
-                  Off
-                </GlowButton>
-              </div>
-
-              <div>
-                <div className="mb-2 flex items-baseline justify-between text-sm">
-                  <span>Brightness</span>
-                  <span className="text-cyan-100 tabular-nums">{sameBrightness ? `${shownBrightness}%` : "Mixed"}</span>
-                </div>
-                <Slider
-                  min={0}
-                  max={100}
-                  value={[shownBrightness]}
-                  onValueChange={(value) => applyBrightness(Array.isArray(value) ? value[0] : value)}
-                  aria-label="Brightness"
-                />
-              </div>
-
-              <p className={`text-xs leading-5 text-cyan-100/80 ${current ? "invisible" : ""}`} aria-hidden={Boolean(current)}>
-                Tap one screen to type its address.
-              </p>
-              <StatusLine text={layoutStatus} className="line-clamp-2 min-h-10 text-xs leading-5 text-cyan-100" />
-            </div>
-
-            {addressPresence.mounted && addressScreen ? (
-              <div className={`grid ${addressPresence.visible ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`} style={motionStyle}>
-              <div className="overflow-hidden">
-              <div className="flex flex-col gap-2 border-t border-cyan-300/25 pt-4">
-                <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">ADDRESS</p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setKeyboardOpen(true)
-                    setReplaceAddress(true)
-                  }}
-                  className={`rounded-lg border px-3 py-2 text-left ${
-                    keyboardOpen && replaceAddress ? "border-white bg-white/10" : "border-cyan-300/40 bg-[#08245f]/80"
-                  }`}
-                >
-                  <span className="block truncate text-sm leading-5">{addressValue || "Tap to type an address"}</span>
-                </button>
-                <p className="line-clamp-2 text-xs leading-5 text-cyan-100/80">
-                  {zoneDetail(shownZone)}
-                  {previewPending ? " Confirm the layout preview, then set the address." : ""}
-                </p>
-                <GlowButton active onClick={() => void runAddress()}>
-                  Open address
-                </GlowButton>
-              </div>
-              </div>
-              </div>
-            ) : null}
-          </div>
 
         <section
           onClick={() => setSelection({ panel: 2, screen: "all" })}
-          className={`flex cursor-pointer flex-col rounded-2xl border bg-[#071a4d]/70 p-3 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
+          className={`flex min-h-0 cursor-pointer flex-col rounded-2xl border bg-[#071a4d]/70 p-3 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
             selection.panel === 2 && selection.screen === "all"
               ? "border-white shadow-[0_0_24px_rgba(180,230,255,0.35)]"
               : selection.panel === 2
                 ? "border-cyan-300/70"
                 : "border-cyan-300/25"
           }`}
-          style={controlHeight ? { height: controlHeight } : undefined}
         >
           <div className="mb-3 flex items-end justify-between gap-2">
             <div>
@@ -988,6 +979,7 @@ export function WallConsole() {
             />
           </div>
         </section>
+        </div>
       </section>
 
       <footer className="border-t border-cyan-300/30 px-4 py-3 sm:px-6">
@@ -1163,7 +1155,6 @@ function PanelFrame({
   onSelect,
   onOpenRemote,
   dropTarget,
-  height,
 }: {
   panel: PanelId
   title: string
@@ -1176,7 +1167,6 @@ function PanelFrame({
   onSelect: (selection: Selection) => void
   onOpenRemote: (screenId: string) => void
   dropTarget: string
-  height?: number
 }) {
   const ids = rows.flat().map((screen) => screen.id)
   const whole = selection.panel === panel && selection.screen === "all"
@@ -1186,10 +1176,9 @@ function PanelFrame({
   return (
     <section
       onClick={() => onSelect({ panel, screen: "all" })}
-      className={`flex cursor-pointer flex-col rounded-2xl border bg-[#071a4d]/70 p-3 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
+      className={`flex min-h-0 cursor-pointer flex-col rounded-2xl border bg-[#071a4d]/70 p-3 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
         whole ? "border-white shadow-[0_0_24px_rgba(180,230,255,0.35)]" : selection.panel === panel ? "border-cyan-300/70" : "border-cyan-300/25"
       }`}
-      style={height ? { height } : undefined}
     >
       <div className="mb-3 flex items-end justify-between gap-2">
         <div>
@@ -1285,10 +1274,10 @@ function ScreenWall({
   const rowCount = rows.length
   return (
     <div
-      className="grid min-h-0 w-full flex-1 gap-1 p-5"
+      className="grid h-full min-h-0 w-full flex-1 content-center gap-1 p-5"
       style={{
         gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-        gridTemplateRows: `repeat(${rowCount}, minmax(0, 1fr))`,
+        gridTemplateRows: `repeat(${rowCount}, auto)`,
       }}
     >
       {rows.flat().map((screen) => (
@@ -1336,8 +1325,7 @@ function ScreenThumb({ id, stamp, dim }: { id: string; stamp: number; dim: boole
       src={src}
       alt=""
       draggable={false}
-      className={dim ? "opacity-40" : ""}
-      style={{ display: "block", width: "auto", height: "auto", maxWidth: "100%", maxHeight: "100%" }}
+      className={`block h-full w-full object-contain ${dim ? "opacity-40" : ""}`}
     />
   )
 }
@@ -1377,18 +1365,17 @@ function ScreenButton({
         event.stopPropagation()
         onOpenRemote()
       }}
-      className="grid h-full min-h-0 w-full overflow-hidden rounded-sm border text-center transition-[border-color,box-shadow,background-color] duration-200"
+      className="relative aspect-video w-full min-w-0 overflow-hidden rounded-sm border text-center transition-[border-color,box-shadow,background-color] duration-200"
       style={{
-        gridTemplateRows: "minmax(0, 1fr) auto",
         borderColor: hot || selected ? "#ffffff" : color,
         background: on ? `${color}33` : "rgba(0,0,0,0.45)",
         boxShadow: hot ? "0 0 18px #7ee8ff" : selected ? `0 0 16px ${color}` : undefined,
       }}
     >
-      <span className="flex min-h-0 items-center justify-center">
+      <span className="absolute inset-0">
         <ScreenThumb id={screen.id} stamp={thumbStamp} dim={!on} />
       </span>
-      <span className="pointer-events-none shrink-0 px-1 pt-0.5 pb-1">
+      <span className="pointer-events-none absolute inset-x-0 bottom-1 z-10 px-1 [text-shadow:0_1px_3px_rgba(0,0,0,0.85)]">
         <span className="block text-sm font-semibold leading-tight">{number}</span>
         <span className="block text-[10px] leading-tight text-cyan-50/90">{screen.hdmi}</span>
       </span>
