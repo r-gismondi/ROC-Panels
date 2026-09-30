@@ -85,6 +85,27 @@ public static class VncKeyboardWin {
         SetWindowPos(hwnd, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
     }
 
+    public static double Ease(double time) {
+        if (time <= 0) return 0;
+        if (time >= 1) return 1;
+        double x1 = 0.22, y1 = 1, x2 = 0.36, y2 = 1;
+        double t = time;
+        for (int i = 0; i < 8; i++) {
+            double mt = 1 - t;
+            double x = (3 * mt * mt * t * x1) + (3 * mt * t * t * x2) + (t * t * t);
+            double dx = (3 * mt * mt * x1) + (6 * mt * t * (x2 - x1)) + (3 * t * t * (1 - x2));
+            if (Math.Abs(dx) < 1e-6) break;
+            t -= (x - time) / dx;
+            if (t < 0) t = 0;
+            else if (t > 1) t = 1;
+        }
+        double u = 1 - t;
+        double y = (3 * u * u * t * y1) + (3 * u * t * t * y2) + (t * t * t);
+        if (y < 0) return 0;
+        if (y > 1) return 1;
+        return y;
+    }
+
     public static void FocusSession() {
         IntPtr best = IntPtr.Zero;
         int bestArea = 0;
@@ -290,6 +311,12 @@ $icon.Cursor = [System.Windows.Forms.Cursors]::SizeAll
 $buttonForm.Controls.Add($icon)
 $margin = 24
 $buttonForm.Location = New-Object System.Drawing.Point ($area.Right - $buttonForm.Width - $margin), ($area.Bottom - $buttonForm.Height - $margin)
+$script:motionMs = 480
+$script:buttonOpacity = 0.46
+$script:buttonHome = $buttonForm.Location
+$script:buttonIntro = $true
+$buttonForm.Opacity = 0
+$buttonForm.Top = $script:buttonHome.Y + $buttonForm.Height
 
 $keyboard = New-Object System.Windows.Forms.Form
 $keyboard.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
@@ -329,6 +356,13 @@ $script:dragging = $false
 $script:dragCursor = $null
 $script:dragOrigin = $null
 function Start-Drag {
+    if ($script:panelMoving -and -not $script:panelHide) {
+        $script:panelMoving = $false
+        $script:panelMotion.Stop()
+        $keyboard.Opacity = 1
+        $script:panelRestX = $keyboard.Left
+        $script:panelRestY = $keyboard.Top
+    }
     $script:dragging = $true
     $script:dragCursor = [System.Windows.Forms.Cursor]::Position
     $script:dragOrigin = $keyboard.Location
@@ -353,6 +387,8 @@ function Move-Drag {
 function Stop-Drag {
     $script:dragging = $false
     $dragBar.Capture = $false
+    $script:panelRestX = $keyboard.Left
+    $script:panelRestY = $keyboard.Top
 }
 $dragBar.Add_MouseDown({ if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Start-Drag } })
 $dragBar.Add_MouseMove({ Move-Drag })
@@ -395,7 +431,7 @@ $shiftButton = New-Key "Shift" { $script:shift = -not $script:shift; Update-Shif
 $spaceButton = New-Key "Space" { [VncKeyboardWin]::Tap([uint16]0x20, $false) } 12
 $backButton = New-Key "Backspace" { [VncKeyboardWin]::Tap([uint16]0x08, $false) } 12
 $enterButton = New-Key "Enter" { [VncKeyboardWin]::Tap([uint16]0x0D, $false) } 12
-$hideButton = New-Key "Hide keyboard" { $keyboard.Hide() } 12
+$hideButton = New-Key "Hide keyboard" { Hide-KeyboardPanel } 12
 foreach ($action in @($windowsButton, $shiftButton, $spaceButton, $backButton, $enterButton, $hideButton)) {
     $keyboard.Controls.Add($action)
 }
@@ -450,24 +486,107 @@ function Update-KeyboardLayout {
 $keyboard.Add_Resize({ Update-KeyboardLayout })
 Update-KeyboardLayout
 
-function Show-KeyboardPanel {
-    Get-Process -Name osk -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    if (-not $script:keyboardPlaced) {
-        $here = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position).WorkingArea
-        $width = [Math]::Min(1040, $here.Width - 80)
-        $height = [Math]::Min(380, $here.Height - 160)
-        $x = $here.Left + [Math]::Floor(($here.Width - $width) / 2)
-        $y = $here.Bottom - $height - 16
-        $keyboard.Bounds = New-Object System.Drawing.Rectangle $x, $y, $width, $height
-        $script:keyboardPlaced = $true
+$script:panelRestX = $keyboard.Left
+$script:panelRestY = $keyboard.Top
+$script:panelFromY = 0.0
+$script:panelToY = 0.0
+$script:panelFromOpacity = 0.0
+$script:panelToOpacity = 1.0
+$script:panelStart = [datetime]::UtcNow
+$script:panelHide = $false
+$script:panelMoving = $false
+$script:panelMotion = New-Object System.Windows.Forms.Timer
+$script:panelMotion.Interval = 16
+$script:panelMotion.Add_Tick({
+    if (-not $script:panelMoving -or $keyboard.IsDisposed) { $script:panelMotion.Stop(); return }
+    $elapsed = ([datetime]::UtcNow - $script:panelStart).TotalMilliseconds
+    $t = 1.0
+    if ($elapsed -lt $script:motionMs) { $t = $elapsed / $script:motionMs }
+    $ease = [VncKeyboardWin]::Ease([double]$t)
+    $y = $script:panelFromY + (($script:panelToY - $script:panelFromY) * $ease)
+    $keyboard.Top = [int][Math]::Round($y)
+    $opacity = $script:panelFromOpacity + (($script:panelToOpacity - $script:panelFromOpacity) * $ease)
+    if ($opacity -lt 0) { $opacity = 0 }
+    if ($opacity -gt 1) { $opacity = 1 }
+    $keyboard.Opacity = $opacity
+    if ($t -ge 1) {
+        $script:panelMoving = $false
+        $script:panelMotion.Stop()
+        $keyboard.Top = [int][Math]::Round($script:panelToY)
+        $keyboard.Opacity = $script:panelToOpacity
+        if ($script:panelHide) {
+            $keyboard.Hide()
+            $keyboard.Top = $script:panelRestY
+            $keyboard.Opacity = 0
+        }
+        [VncKeyboardWin]::StayOnTop($buttonForm.Handle)
     }
-    $keyboard.Opacity = 1
-    $keyboard.Show()
+})
+
+function Start-KeyboardMotion([bool]$show) {
+    if ($show) {
+        Get-Process -Name osk -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        if (-not $script:keyboardPlaced) {
+            $here = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position).WorkingArea
+            $width = [Math]::Min(1040, $here.Width - 80)
+            $height = [Math]::Min(380, $here.Height - 160)
+            $x = $here.Left + [Math]::Floor(($here.Width - $width) / 2)
+            $y = $here.Bottom - $height - 16
+            $keyboard.Bounds = New-Object System.Drawing.Rectangle $x, $y, $width, $height
+            $script:panelRestX = $keyboard.Left
+            $script:panelRestY = $keyboard.Top
+            $script:keyboardPlaced = $true
+            Update-KeyboardLayout
+        }
+        $keyboard.Left = $script:panelRestX
+        if (-not $keyboard.Visible) {
+            $keyboard.Top = $script:panelRestY + $keyboard.Height
+            $keyboard.Opacity = 0
+            $keyboard.Show()
+        }
+        $script:panelFromY = $keyboard.Top
+        $script:panelToY = $script:panelRestY
+        $script:panelFromOpacity = [double]$keyboard.Opacity
+        $script:panelToOpacity = 1
+        $script:panelHide = $false
+    } else {
+        if (-not $keyboard.Visible) { return }
+        $script:panelFromY = $keyboard.Top
+        $script:panelToY = $script:panelRestY + $keyboard.Height
+        $script:panelFromOpacity = [double]$keyboard.Opacity
+        $script:panelToOpacity = 0
+        $script:panelHide = $true
+    }
+    $script:panelStart = [datetime]::UtcNow
+    $script:panelMoving = $true
     $keyboard.TopMost = $true
     [VncKeyboardWin]::StayOnTop($keyboard.Handle)
     [VncKeyboardWin]::StayOnTop($buttonForm.Handle)
-    Update-KeyboardLayout
+    $script:panelMotion.Start()
 }
+
+function Show-KeyboardPanel { Start-KeyboardMotion $true }
+function Hide-KeyboardPanel { Start-KeyboardMotion $false }
+
+$script:buttonIntroTimer = New-Object System.Windows.Forms.Timer
+$script:buttonIntroTimer.Interval = 16
+$script:buttonIntroStart = [datetime]::UtcNow
+$script:buttonIntroTimer.Add_Tick({
+    if (-not $script:buttonIntro -or $buttonForm.IsDisposed) { $script:buttonIntroTimer.Stop(); return }
+    $elapsed = ([datetime]::UtcNow - $script:buttonIntroStart).TotalMilliseconds
+    $t = 1.0
+    if ($elapsed -lt $script:motionMs) { $t = $elapsed / $script:motionMs }
+    $ease = [VncKeyboardWin]::Ease([double]$t)
+    $buttonForm.Opacity = $script:buttonOpacity * $ease
+    $buttonForm.Top = [int][Math]::Round($script:buttonHome.Y + ((1 - $ease) * $buttonForm.Height))
+    $buttonForm.Left = $script:buttonHome.X
+    if ($t -ge 1) {
+        $script:buttonIntro = $false
+        $buttonForm.Opacity = $script:buttonOpacity
+        $buttonForm.Location = $script:buttonHome
+        $script:buttonIntroTimer.Stop()
+    }
+})
 
 $script:iconDown = $false
 $script:iconMoved = $false
@@ -493,6 +612,11 @@ function Move-KeyboardIcon {
 }
 $icon.Add_MouseDown({
     if ($_.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
+    if ($script:buttonIntro) {
+        $script:buttonIntro = $false
+        $script:buttonIntroTimer.Stop()
+        $buttonForm.Opacity = $script:buttonOpacity
+    }
     $script:iconDown = $true
     $script:iconMoved = $false
     $script:iconCursor = [System.Windows.Forms.Cursor]::Position
@@ -506,7 +630,7 @@ $icon.Add_MouseUp({
     $script:iconDown = $false
     $icon.Capture = $false
     if ($dragged) { return }
-    if ($keyboard.Visible) { $keyboard.Hide() } else { Show-KeyboardPanel }
+    if ($keyboard.Visible -and -not $script:panelHide) { Hide-KeyboardPanel } else { Show-KeyboardPanel }
 })
 
 $script:previewMode = [bool]$Preview
@@ -522,6 +646,8 @@ $timer.Add_Tick({
     }
 })
 $timer.Start()
+$script:buttonIntroStart = [datetime]::UtcNow
+$script:buttonIntroTimer.Start()
 if ($script:previewMode) { Show-KeyboardPanel }
 $buttonForm.Add_FormClosed({ $keyboard.Close() })
 [System.Windows.Forms.Application]::Run($buttonForm)

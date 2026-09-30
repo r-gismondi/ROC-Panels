@@ -153,8 +153,8 @@ public static class VncHostWin {
             KeepOffTaskbar(hwnd);
             if (IsIconic(hwnd)) ShowWindow(hwnd, 9);
             ShowWindow(hwnd, 0);
+            SetWindowPos(hwnd, new IntPtr(-1), x, y, w, h, SWP_FRAMECHANGED);
             ShowWindow(hwnd, 5);
-            SetWindowPos(hwnd, new IntPtr(-1), x, y, w, h, SWP_SHOWWINDOW | SWP_FRAMECHANGED);
             return true;
         }
         if (IsIconic(hwnd)) ShowWindow(hwnd, 9);
@@ -170,6 +170,32 @@ public static class VncHostWin {
         RECT rect;
         GetWindowRect(hwnd, out rect);
         return Math.Abs(rect.Left - x) <= 8 && Math.Abs(rect.Top - y) <= 8 && Math.Abs((rect.Right - rect.Left) - w) <= 8 && Math.Abs((rect.Bottom - rect.Top) - h) <= 8;
+    }
+
+    public static double Ease(double time) {
+        if (time <= 0) return 0;
+        if (time >= 1) return 1;
+        double x1 = 0.22, y1 = 1, x2 = 0.36, y2 = 1;
+        double t = time;
+        for (int i = 0; i < 8; i++) {
+            double mt = 1 - t;
+            double x = (3 * mt * mt * t * x1) + (3 * mt * t * t * x2) + (t * t * t);
+            double dx = (3 * mt * mt * x1) + (6 * mt * t * (x2 - x1)) + (3 * t * t * (1 - x2));
+            if (Math.Abs(dx) < 1e-6) break;
+            t -= (x - time) / dx;
+            if (t < 0) t = 0;
+            else if (t > 1) t = 1;
+        }
+        double u = 1 - t;
+        double y = (3 * u * u * t * y1) + (3 * u * t * t * y2) + (t * t * t);
+        if (y < 0) return 0;
+        if (y > 1) return 1;
+        return y;
+    }
+
+    public static void Move(IntPtr hwnd, int x, int y, int w, int h) {
+        if (!IsWindow(hwnd)) return;
+        SetWindowPos(hwnd, new IntPtr(-1), x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
 
     public static void Raise(IntPtr hwnd) {
@@ -293,8 +319,21 @@ $form.TopMost = $true
 $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
 $form.BackColor = $navy
 $form.ForeColor = [System.Drawing.Color]::White
-$form.Bounds = New-Object System.Drawing.Rectangle $area.X, $area.Y, $area.Width, $barHeight
 $form.Text = "VNC session"
+$script:motionMs = 480
+$script:frameX = $area.X
+$script:framePairY = $area.Y
+$script:frameW = $area.Width
+$script:frameContentY = $area.Y + $barHeight
+$script:frameContentH = [Math]::Max(1, $area.Height - $barHeight)
+$script:viewerTravel = $script:frameContentH
+$script:chromeStart = Get-Date
+$script:viewerStart = $null
+$script:exitStart = $null
+$script:exitFromOffset = 0
+$script:exitFromOpacity = 0.0
+$form.Opacity = 0
+$form.Bounds = New-Object System.Drawing.Rectangle $area.X, ($area.Y + $barHeight), $area.Width, $barHeight
 
 $accent = New-Object System.Windows.Forms.Panel
 $accent.Dock = [System.Windows.Forms.DockStyle]::Bottom
@@ -327,12 +366,25 @@ $form.Controls.Add($close)
 $close.BringToFront()
 
 $close.Add_Click({
-    if ($script:leaving) { return }
-    $script:leaving = $true
+    if ($script:leaving -or $script:exitStart) { return }
+    $script:exitFromChrome = 0
+    $script:exitFromViewer = 0
+    if ($script:chromeStart) {
+        $ease = Get-MotionEase $script:chromeStart
+        if ($ease -lt 1) { $script:exitFromChrome = [int][Math]::Round((1 - $ease) * $barHeight) }
+    }
+    if ($script:viewerStart) {
+        $ease = Get-MotionEase $script:viewerStart
+        if ($ease -lt 1) { $script:exitFromViewer = [int][Math]::Round((1 - $ease) * $script:viewerTravel) }
+    } else {
+        $script:exitFromViewer = $script:exitFromChrome
+    }
+    $script:exitFromOpacity = [double]$form.Opacity
+    $script:exitStart = Get-Date
+    $script:chromeStart = $null
+    $script:viewerStart = $null
     try { $timer.Stop() } catch {}
-    $form.Hide()
-    try { Close-Viewer } catch {}
-    $form.Close()
+    $script:motionTimer.Start()
 })
 
 $form.Add_FormClosing({
@@ -382,8 +434,16 @@ $timer.Add_Tick({
         $contentX = $area.X + [int][Math]::Floor([Math]::Max(0, $maxW - $contentW) / 2)
         $pairY = $area.Y + [int][Math]::Floor([Math]::Max(0, $area.Height - ($barHeight + $contentH)) / 2)
         $contentY = $pairY + $barHeight
-        if ($form.Left -ne $contentX -or $form.Top -ne $pairY -or $form.Width -ne $contentW -or $form.Height -ne $barHeight) {
-            $form.Bounds = New-Object System.Drawing.Rectangle $contentX, $pairY, $contentW, $barHeight
+        $script:frameX = $contentX
+        $script:framePairY = $pairY
+        $script:frameW = $contentW
+        $script:frameContentY = $contentY
+        $script:frameContentH = [Math]::Max(1, $contentH)
+        $opening = $script:chromeStart -or $script:viewerStart -or $script:exitStart
+        if (-not $opening) {
+            if ($form.Left -ne $contentX -or $form.Top -ne $pairY -or $form.Width -ne $contentW -or $form.Height -ne $barHeight) {
+                $form.Bounds = New-Object System.Drawing.Rectangle $contentX, $pairY, $contentW, $barHeight
+            }
         }
 
         if ($session) {
@@ -391,7 +451,15 @@ $timer.Add_Tick({
             $script:misses = 0
             $script:sessionHwnd = $session.Hwnd
             $restyle = $script:styledHwnd -ne $session.Hwnd
-            $placed = [VncHostWin]::Place($session.Hwnd, $contentX, $contentY, $contentW, $contentH, $restyle)
+            $placed = $false
+            if ($restyle) {
+                $script:viewerStart = Get-Date
+                $script:viewerTravel = [Math]::Max($contentH, 1)
+                $script:motionTimer.Start()
+                $placed = [VncHostWin]::Place($session.Hwnd, $contentX, ($contentY + $script:viewerTravel), $contentW, $contentH, $true)
+            } elseif (-not $script:chromeStart -and -not $script:viewerStart -and -not $script:exitStart) {
+                $placed = [VncHostWin]::Place($session.Hwnd, $contentX, $contentY, $contentW, $contentH, $false)
+            }
             $script:styledHwnd = $session.Hwnd
             if ($placed) {
                 foreach ($keyboardTitle in @("VNC Keyboard", "Keyboard")) {
@@ -436,8 +504,86 @@ $timer.Add_Tick({
     }
 })
 
+function Get-MotionEase($start) {
+    if (-not $start) { return 1.0 }
+    $elapsed = ((Get-Date) - $start).TotalMilliseconds
+    if ($elapsed -le 0) { return 0.0 }
+    $t = $elapsed / $script:motionMs
+    if ($t -ge 1) { return 1.0 }
+    return [VncHostWin]::Ease([double]$t)
+}
+
+function Update-VncMotion {
+    if ($script:leaving -or $form.IsDisposed) { return }
+    $travel = [Math]::Max($area.Height, 1)
+    if ($script:exitStart) {
+        $ease = Get-MotionEase $script:exitStart
+        $chromeOffset = [int][Math]::Round($script:exitFromChrome + (($travel - $script:exitFromChrome) * $ease))
+        $viewerOffset = [int][Math]::Round($script:exitFromViewer + (($travel - $script:exitFromViewer) * $ease))
+        $opacity = $script:exitFromOpacity * (1 - $ease)
+        if ($opacity -lt 0) { $opacity = 0 }
+        if ($opacity -gt 1) { $opacity = 1 }
+        $form.Opacity = $opacity
+        $form.Bounds = New-Object System.Drawing.Rectangle $script:frameX, ($script:framePairY + $chromeOffset), $script:frameW, $barHeight
+        if ($script:styledHwnd -ne [IntPtr]::Zero -and $script:styledHwnd -eq $script:sessionHwnd) {
+            [VncHostWin]::Move($script:sessionHwnd, $script:frameX, ($script:frameContentY + $viewerOffset), $script:frameW, $script:frameContentH)
+        }
+        if ($ease -ge 1) {
+            $script:motionTimer.Stop()
+            $script:exitStart = $null
+            $script:leaving = $true
+            try { $form.Hide() } catch {}
+            try { Close-Viewer } catch {}
+            try { $form.Close() } catch {}
+        }
+        return
+    }
+
+    $moving = [bool]($script:chromeStart -or $script:viewerStart)
+    $chromeOffset = 0
+    if ($script:chromeStart) {
+        $ease = Get-MotionEase $script:chromeStart
+        $chromeOffset = [int][Math]::Round((1 - $ease) * $barHeight)
+        $opacity = $ease
+        if ($opacity -lt 0) { $opacity = 0 }
+        if ($opacity -gt 1) { $opacity = 1 }
+        $form.Opacity = $opacity
+        if ($ease -ge 1) {
+            $script:chromeStart = $null
+            $chromeOffset = 0
+            $form.Opacity = 1
+        }
+        $form.Bounds = New-Object System.Drawing.Rectangle $script:frameX, ($script:framePairY + $chromeOffset), $script:frameW, $barHeight
+    }
+
+    $viewerOffset = $chromeOffset
+    if ($script:viewerStart) {
+        $ease = Get-MotionEase $script:viewerStart
+        $viewerOffset = [int][Math]::Round((1 - $ease) * $script:viewerTravel)
+        if ($ease -ge 1) {
+            $script:viewerStart = $null
+            $viewerOffset = 0
+        }
+    }
+    if ($moving -and $script:styledHwnd -ne [IntPtr]::Zero -and $script:styledHwnd -eq $script:sessionHwnd) {
+        [VncHostWin]::Move($script:sessionHwnd, $script:frameX, ($script:frameContentY + $viewerOffset), $script:frameW, $script:frameContentH)
+    }
+    if (-not $script:chromeStart -and -not $script:viewerStart) {
+        $script:motionTimer.Stop()
+        if ($form.Left -ne $script:frameX -or $form.Top -ne $script:framePairY -or $form.Width -ne $script:frameW -or $form.Height -ne $barHeight) {
+            $form.Bounds = New-Object System.Drawing.Rectangle $script:frameX, $script:framePairY, $script:frameW, $barHeight
+        }
+        $form.Opacity = 1
+    }
+}
+
+$script:motionTimer = New-Object System.Windows.Forms.Timer
+$script:motionTimer.Interval = 16
+$script:motionTimer.Add_Tick({ Update-VncMotion })
+
 $form.Add_Shown({
     $timer.Start()
+    $script:motionTimer.Start()
     $existing = @(Get-VncWindows | Where-Object { $_.Title -like "*$($script:Address)*" -and $_.Title -ne "RealVNC Viewer" })
     if ($existing.Count -gt 0) { return }
     try { Start-Viewer } catch { $title.Text = $_.Exception.Message }
