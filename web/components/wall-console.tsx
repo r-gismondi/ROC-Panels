@@ -1331,7 +1331,13 @@ function ScreenThumb({ id, stamp, dim }: { id: string; stamp: number; dim: boole
     probe.src = next
   }, [id, stamp])
   if (!src) return null
-  return <img src={src} alt="" className={`absolute inset-0 h-full w-full object-contain ${dim ? "opacity-40" : ""}`} />
+  return (
+    <span
+      aria-hidden
+      className={`absolute inset-0 bg-contain bg-center bg-no-repeat ${dim ? "opacity-40" : ""}`}
+      style={{ backgroundImage: `url("${src}")` }}
+    />
+  )
 }
 
 function ScreenButton({
