@@ -178,6 +178,7 @@ export function WallConsole() {
   const layoutBusy = useRef(false)
   const launchLock = useRef(false)
   const brightnessTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const brightnessDraft = useRef<number | null>(null)
   const screenHold = useRef<Screen | undefined>(undefined)
   const coachHold = useRef<PinnedApp | null>(null)
   const dragSession = useRef<{ pointerId: number; id: string; x: number; y: number; dragging: boolean } | null>(null)
@@ -395,6 +396,7 @@ export function WallConsole() {
     screens.forEach((id) => {
       previous[id] = brightness[id]
     })
+    brightnessDraft.current = level
     setBrightness((currentBrightness) => {
       const next = { ...currentBrightness }
       screens.forEach((id) => {
@@ -404,8 +406,16 @@ export function WallConsole() {
     })
     if (brightnessTimer.current) clearTimeout(brightnessTimer.current)
     brightnessTimer.current = setTimeout(() => {
+      if (brightnessDraft.current === level) brightnessDraft.current = null
       void sendBrightness(screens, level, previous)
     }, 80)
+  }
+
+  function stepBrightness(delta: number) {
+    const base = brightnessDraft.current ?? shownBrightness
+    const next = Math.min(100, Math.max(0, Math.round(base) + delta))
+    if (next === base && brightnessValues.every((value) => value === next)) return
+    applyBrightness(next)
   }
 
   async function sendBrightness(screens: string[], level: number, previous: Record<string, number>) {
@@ -919,13 +929,36 @@ export function WallConsole() {
                 <span>Brightness</span>
                 <span className="text-cyan-100 tabular-nums">{sameBrightness ? `${shownBrightness}%` : "Mixed"}</span>
               </div>
-              <Slider
-                min={0}
-                max={100}
-                value={[shownBrightness]}
-                onValueChange={(value) => applyBrightness(Array.isArray(value) ? value[0] : value)}
-                aria-label="Brightness"
-              />
+              <div className="flex items-center gap-2">
+                <Slider
+                  className="min-w-0 flex-1"
+                  min={0}
+                  max={100}
+                  value={[shownBrightness]}
+                  onValueChange={(value) => applyBrightness(Array.isArray(value) ? value[0] : value)}
+                  aria-label="Brightness"
+                />
+                <div className="flex shrink-0 gap-1">
+                  <button
+                    type="button"
+                    aria-label="Decrease brightness"
+                    disabled={!brightnessValues.some((value) => value > 0)}
+                    onClick={() => stepBrightness(-1)}
+                    className="flex h-8 w-8 items-center justify-center rounded-md border border-cyan-200/35 bg-[#16315f] text-xs leading-none text-cyan-50 transition hover:bg-white/10 disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    ▼
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Increase brightness"
+                    disabled={!brightnessValues.some((value) => value < 100)}
+                    onClick={() => stepBrightness(1)}
+                    className="flex h-8 w-8 items-center justify-center rounded-md border border-cyan-200/35 bg-[#16315f] text-xs leading-none text-cyan-50 transition hover:bg-white/10 disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    ▲
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div className="min-w-56 flex-1 basis-64">
