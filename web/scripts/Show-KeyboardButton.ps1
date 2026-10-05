@@ -194,12 +194,13 @@ function Update-ShiftLabels {
     $shiftButton.BackColor = if ($script:shift) { [System.Drawing.Color]::FromArgb(128, 128, 132) } else { $keyBg }
 }
 
-function Send-Char([string]$ch, [bool]$useShift) {
+function Send-Char([string]$ch, $useShift) {
     $vk = $null
     $shifted = $false
+    $shiftDown = $useShift -eq $true
     if ($ch -match '^[a-zA-Z]$') {
         $vk = [uint16][byte][char]$ch.ToUpper()
-        $shifted = $useShift -or [char]::IsUpper($ch)
+        $shifted = $shiftDown -or [char]::IsUpper($ch)
     } elseif ($ch -match '^[0-9]$') {
         $vk = [uint16][byte][char]$ch
     } else {
@@ -245,7 +246,23 @@ function New-Key([string]$text, [scriptblock]$onClick, [double]$fontSize) {
     $button.Add_MouseUp({
         param($sender, $eventArgs)
         if ($eventArgs.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
-        & $sender.Tag
+        $action = $sender.Tag
+        if ($action -is [scriptblock]) {
+            & $action
+            return
+        }
+        if ($null -eq $action) { return }
+        if ($action.Kind -eq "letter") {
+            Send-Char $action.Char ([bool]$script:shift)
+            if ($script:shift) {
+                $script:shift = $false
+                Update-ShiftLabels
+            }
+        } elseif ($action.Kind -eq "text") {
+            Send-Text $action.Char
+        } elseif ($action.Kind -eq "char") {
+            Send-Char $action.Char $false
+        }
     })
     $button.Tag = $onClick
     return $button
@@ -263,17 +280,14 @@ function Add-KeyRow([string[]]$labels, [bool]$letters, [int[]]$weights) {
         if ($letters -and $label -match '^[a-z]$') {
             $lower = $label
             $button = New-Key $lower { } 12
-            $captured = $lower
-            $button.Tag = { Send-Char $captured $script:shift; if ($script:shift) { $script:shift = $false; Update-ShiftLabels } }.GetNewClosure()
+            $button.Tag = @{ Kind = "letter"; Char = $lower }
             $script:shiftables += [PSCustomObject]@{ Button = $button; Lower = $lower; Upper = $lower.ToUpper() }
         } elseif ($label -in @("https://", "www.", ".com")) {
-            $captured = $label
             $button = New-Key $label { } 12
-            $button.Tag = { Send-Text $captured }.GetNewClosure()
+            $button.Tag = @{ Kind = "text"; Char = $label }
         } else {
-            $captured = $label
             $button = New-Key $label { } 12
-            $button.Tag = { Send-Char $captured $false }.GetNewClosure()
+            $button.Tag = @{ Kind = "char"; Char = $label }
         }
         $keyboard.Controls.Add($button)
         [void]$buttons.Add($button)
