@@ -82,7 +82,9 @@ if (Test-Path -LiteralPath $envFile) {
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dist "pedestal.config.json") -Encoding Ascii
 
 Write-Host "Compiling ROC-Panels.exe..."
-& $csc /nologo /optimize /target:winexe /reference:System.Windows.Forms.dll /out:"$(Join-Path $dist 'ROC-Panels.exe')" (Join-Path $PSScriptRoot "Launcher.cs")
+$icon = Join-Path $PSScriptRoot "ROC-Panels.ico"
+Copy-Item -LiteralPath $icon -Destination (Join-Path $dist "ROC-Panels.ico")
+& $csc /nologo /optimize /target:winexe /win32icon:$icon /reference:System.Windows.Forms.dll /out:"$(Join-Path $dist 'ROC-Panels.exe')" (Join-Path $PSScriptRoot "Launcher.cs")
 if ($LASTEXITCODE -ne 0) { throw "The launcher did not compile." }
 
 Write-Host ""
