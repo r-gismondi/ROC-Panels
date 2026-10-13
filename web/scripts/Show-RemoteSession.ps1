@@ -97,7 +97,6 @@ public static class RemoteWin {
     [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr hWnd, int nIndex);
     [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
     [DllImport("user32.dll")] static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
-
     const int GWL_STYLE = -16;
     const int GWL_EXSTYLE = -20;
     const int WS_CAPTION = 0x00C00000;
@@ -277,6 +276,11 @@ public static class RemoteWin {
         _hook = IntPtr.Zero;
     }
 
+    public static void KeepBelow(IntPtr hwnd, IntPtr above) {
+        if (hwnd == IntPtr.Zero || !IsWindow(hwnd) || above == IntPtr.Zero || !IsWindow(above)) return;
+        SetWindowPos(hwnd, above, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+
     public static void NoActivate(IntPtr hwnd) {
         int ex = GetWindowLong(hwnd, -20);
         SetWindowLong(hwnd, -20, ex | 0x08000000 | 0x00000080 | 0x00000008);
@@ -315,6 +319,8 @@ $cache.Add($AE::BoundingRectangleProperty)
 
 $barBlack = [System.Drawing.Color]::FromArgb(32, 33, 36)
 $closeRed = [System.Drawing.Color]::FromArgb(196, 43, 28)
+# Fully transparent windows do not take clicks; this is the faintest one that does.
+$ghostOpacity = 0.01
 
 $script:Name = $Name
 $script:Url = $Url
@@ -342,6 +348,7 @@ $script:disconnect = $null
 $script:lastScan = [datetime]::MinValue
 $script:lastNames = ""
 $script:hot = $false
+$script:ghost = $false
 $script:leaving = $false
 
 function Get-EdgeWindows {
@@ -362,6 +369,21 @@ function Get-ConsoleWindow {
     return [IntPtr]::Zero
 }
 
+# The session is slid in just under the X; raising it over the X even briefly makes the X flicker.
+function Set-SessionOrder {
+    if (-not $form.Visible) {
+        [RemoteWin]::KeepOnTop($script:hwnd)
+        return
+    }
+    [RemoteWin]::KeepOnTop($form.Handle)
+    $under = $form.Handle
+    if ($lock.Visible) {
+        [RemoteWin]::KeepBelow($lock.Handle, $under)
+        $under = $lock.Handle
+    }
+    [RemoteWin]::KeepBelow($script:hwnd, $under)
+}
+
 function Update-SessionFrame {
     $console = Get-ConsoleWindow
     if ($console -ne [IntPtr]::Zero -and [RemoteWin]::HasCaption($console)) {
@@ -380,7 +402,7 @@ function Update-SessionFrame {
     } else {
         if (-not $script:focused) { Write-Log "Session is in front." }
         $script:focused = $true
-        [RemoteWin]::KeepOnTop($script:hwnd)
+        Set-SessionOrder
     }
     # Fit the frame only after this window is in front, so F11 cannot hit the console.
     if (-not [RemoteWin]::IsForeground($script:hwnd)) { return }
@@ -642,24 +664,33 @@ function Update-FullScreen($rows) {
 
 function Update-CloseButton {
     $win = [RemoteWin]::Rect($script:hwnd)
+    $script:ghost = $false
     if ($script:visualFull) {
-        $side = 40
-        $x = $bounds.Right - $side - 12
+        $w = $h = 40
+        $x = $bounds.Right - $w - 12
         $y = $bounds.Top + 12
     } elseif ($script:barX) {
+        # Lie invisibly over the tab bar X, so its own X shows and the click disconnects.
         $rect = $script:barX
-        $side = [int][Math]::Ceiling([Math]::Max([Math]::Max($rect.Width, $rect.Height) + 8, 40))
-        $x = [int][Math]::Round($rect.Left + $rect.Width / 2 - $side / 2)
-        $y = [int][Math]::Round($rect.Top + $rect.Height / 2 - $side / 2)
-        if ($y -lt $win[1]) { $y = $win[1] }
+        $script:ghost = $true
+        $x = [int][Math]::Floor($rect.Left)
+        $y = [int][Math]::Floor($rect.Top)
+        $w = [int][Math]::Ceiling($rect.Right) - $x
+        $h = [int][Math]::Ceiling($rect.Bottom) - $y
     } else {
-        $side = 48
-        $x = $win[0] + $win[2] - $side
+        $w = $h = 48
+        $x = $win[0] + $win[2] - $w
         $y = $win[1]
     }
-    if ($form.Left -ne $x -or $form.Top -ne $y -or $form.Width -ne $side -or $form.Height -ne $side) {
-        $form.Bounds = New-Object System.Drawing.Rectangle $x, $y, $side, $side
+    if ($form.Left -ne $x -or $form.Top -ne $y -or $form.Width -ne $w -or $form.Height -ne $h) {
+        $form.Bounds = New-Object System.Drawing.Rectangle $x, $y, $w, $h
         $form.Invalidate()
+    }
+    if ($script:ghost) {
+        if ($fade.Enabled) { $fade.Stop() }
+        if ($form.Opacity -ne $ghostOpacity) { $form.Opacity = $ghostOpacity }
+    } elseif ($form.Visible -and $form.Opacity -lt 1.0 -and -not $fade.Enabled) {
+        $fade.Start()
     }
 }
 
@@ -776,7 +807,7 @@ $lock.ShowInTaskbar = $false
 $lock.TopMost = $true
 $lock.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
 $lock.Text = "Keep full screen"
-$lock.Opacity = 0.01
+$lock.Opacity = $ghostOpacity
 $lock.BackColor = $barBlack
 $lock.Add_HandleCreated({ [RemoteWin]::NoActivate($lock.Handle) })
 
@@ -818,18 +849,16 @@ $timer.Add_Tick({
         if (((Get-Date) - $script:lastScan).TotalMilliseconds -ge $scanMs) {
             $script:lastScan = Get-Date
             try { Update-SessionControls } catch { Write-Log "Scan: $($_.Exception.Message)" }
-            [RemoteWin]::KeepOnTop($script:hwnd)
-            if ($lock.Visible) { [RemoteWin]::KeepOnTop($lock.Handle) }
         }
 
         Update-CloseButton
         if (-not $form.Visible) {
-            $form.Opacity = 0
+            $form.Opacity = $(if ($script:ghost) { $ghostOpacity } else { 0 })
             $form.Show()
             [RemoteWin]::Focus($script:hwnd)
-            $fade.Start()
+            if (-not $script:ghost) { $fade.Start() }
         }
-        [RemoteWin]::KeepOnTop($form.Handle)
+        Set-SessionOrder
     } catch {
         Write-Log "Tick: $($_.Exception.Message)"
     }
