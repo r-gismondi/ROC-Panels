@@ -560,41 +560,27 @@ export async function launchProgram(screen: string, exePath: string, name: strin
   return { ok: false, message: "The program did not open." }
 }
 
-const VNC_NAMES: Record<string, string> = {
-  "101": "Screens 1–8",
-  "102": "Screens 9–12 and 14–17",
-  "103": "Screens 13 and 18",
+const REMOTE_SESSIONS: Record<string, { name: string; url: string }> = {
+  "101": { name: "Panel 1", url: "https://remotedesktop.google.com/access/session/80553018-c42f-6e24-99e6-bd2f5b99f581" },
+  "102": { name: "Panel 2", url: "https://remotedesktop.google.com/access/session/70c9b402-91cf-4a79-fd3b-38b0652988c0" },
+  "103": { name: "Panel 3", url: "https://remotedesktop.google.com/access/session/70c58d2b-9e23-02d0-b886-ed37283bb8a8" },
 }
 
-export function openVnc(computer: string): LaunchResult {
-  const host = HOSTS[computer]
-  const name = VNC_NAMES[computer]
-  if (!host || !name) return { ok: false, message: "That screen group is not on this stand." }
+export function openRemote(computer: string): LaunchResult {
+  const session = REMOTE_SESSIONS[computer]
+  if (!session) return { ok: false, message: "That panel is not on this stand." }
   if (process.platform !== "win32") {
     return { ok: false, message: "Run this page on the touchscreen to open the remote desktop." }
   }
-  const viewerPath = "C:\\Program Files\\RealVNC\\VNC Viewer\\vncviewer.exe"
-  const shortcut = path.join("C:\\Program Files\\RealVNC\\VNC Viewer", `${host}.lnk`)
-  if (!fs.existsSync(viewerPath) || !fs.existsSync(shortcut)) {
-    return { ok: false, message: `The VNC shortcut for ${host} was not found.` }
-  }
-  const sessionScript = path.join(scriptsDir(), "Show-VncSession.ps1")
-  const session = spawn(
+  const script = path.join(scriptsDir(), "Show-RemoteSession.ps1")
+  if (!fs.existsSync(script)) return { ok: false, message: "The remote desktop script is missing from this stand." }
+  const child = spawn(
     "powershell.exe",
-    ["-NoProfile", "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", sessionScript, "-ComputerName", name, "-Address", host],
+    ["-NoProfile", "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", script, "-Name", session.name, "-Url", session.url],
     { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
   )
-  session.stdout.resume()
-  session.stderr.resume()
-  session.unref()
-  const button = path.join(scriptsDir(), "Show-KeyboardButton.ps1")
-  const keyboard = spawn(
-    "powershell.exe",
-    ["-NoProfile", "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", button],
-    { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
-  )
-  keyboard.stdout.resume()
-  keyboard.stderr.resume()
-  keyboard.unref()
-  return { ok: true, message: `The remote desktop for ${name.toLowerCase()} is open. Use Close to come back.` }
+  child.stdout.resume()
+  child.stderr.resume()
+  child.unref()
+  return { ok: true, message: `Opening the remote desktop for ${session.name}. Tap X on the session bar to disconnect.` }
 }

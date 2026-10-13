@@ -26,6 +26,14 @@ const GROUP_LABEL = {
   "103": "screens 13 and 18",
 } as const
 
+type Computer = keyof typeof GROUP_LABEL
+
+const REMOTE_PANEL: Record<Computer, string> = {
+  "101": "Panel 1",
+  "102": "Panel 2",
+  "103": "Panel 3",
+}
+
 type Selection = { panel: PanelId; screen: string | "all" }
 
 const GROUP_COLOR = ["#3ec8ff", "#d56bff", "#7eb6ff", "#5eead4", "#f0c27a"]
@@ -170,8 +178,8 @@ export function WallConsole() {
   const [armedApp, setArmedApp] = useState("")
   const [programStatus, setProgramStatus] = useState("")
   const [browseBusy, setBrowseBusy] = useState(false)
-  const [remoteCue, setRemoteCue] = useState("")
-  const remoteTimer = useRef(0)
+  const [remoteAsk, setRemoteAsk] = useState<Computer | "">("")
+  const remoteHold = useRef<Computer>("101")
   const [addresses, setAddresses] = useState<Record<string, string>>({})
   const [keyboardOpen, setKeyboardOpen] = useState(false)
   const [replaceAddress, setReplaceAddress] = useState(false)
@@ -334,7 +342,9 @@ export function WallConsole() {
   const addressScreen = current ?? (addressPresence.mounted ? screenHold.current : undefined)
   const keyboardPresence = usePresence(Boolean(keyboardOpen && addressScreen))
   const browsePresence = usePresence(browseBusy)
-  const remotePresence = usePresence(Boolean(remoteCue))
+  const remotePresence = usePresence(Boolean(remoteAsk))
+  if (remoteAsk) remoteHold.current = remoteAsk
+  const remoteComputer = remoteAsk || remoteHold.current
   const scopeLabel =
     selection.screen === "all" ? "WHOLE PANEL" : selection.screen === "computer-2" || selection.screen === "computer-3" ? "SCREENS" : "ONE SCREEN"
   const scopeTitle =
@@ -580,25 +590,25 @@ export function WallConsole() {
     }
   }
 
-  function openRemote(screenId: string) {
-    if (armedApp) return
-    const computer = COMPUTER_OF[screenId]
-    if (computer) void runVnc(computer)
+  function askRemote(computer: Computer) {
+    if (armedApp) {
+      setArmedApp("")
+      return
+    }
+    setRemoteAsk(computer)
   }
 
-  async function runVnc(computer: "101" | "102" | "103") {
-    setRemoteCue(`Opening the remote desktop for ${GROUP_LABEL[computer]}…`)
-    window.clearTimeout(remoteTimer.current)
-    remoteTimer.current = window.setTimeout(() => setRemoteCue(""), 1400)
-    setLayoutStatus(`Opening the remote desktop for ${GROUP_LABEL[computer]}…`)
+  async function runRemote(computer: Computer) {
+    setRemoteAsk("")
+    setLayoutStatus(`Opening the remote desktop for ${REMOTE_PANEL[computer]}…`)
     try {
-      const response = await fetch("/api/vnc", {
+      const response = await fetch("/api/remote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ computer }),
       })
       const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null
-      setLayoutStatus(body?.message || body?.error || "VNC did not open.")
+      setLayoutStatus(body?.message || body?.error || "The remote desktop did not open.")
     } catch {
       setLayoutStatus("Could not reach the layout service.")
     }
@@ -1013,7 +1023,8 @@ export function WallConsole() {
           thumbStamp={thumbStamp}
           onSelect={choose}
           onPress={pressScreen}
-          onOpenRemote={openRemote}
+          onOpenRemote={() => askRemote("101")}
+          remoteLabel={REMOTE_PANEL["101"]}
           dropTarget={drag?.over ?? ""}
         />
 
@@ -1052,7 +1063,8 @@ export function WallConsole() {
               onSelectFrame={() => setSelection({ panel: 2, screen: "computer-2" })}
               onSelectScreen={(screen) => choose({ panel: 2, screen })}
               onPress={pressScreen}
-              onOpenRemote={openRemote}
+              onOpenRemote={() => askRemote("102")}
+              remoteLabel={REMOTE_PANEL["102"]}
               dropTarget={drag?.over ?? ""}
             />
             <ComputerFrame
@@ -1067,7 +1079,8 @@ export function WallConsole() {
               onSelectFrame={() => setSelection({ panel: 2, screen: "computer-3" })}
               onSelectScreen={(screen) => choose({ panel: 2, screen })}
               onPress={pressScreen}
-              onOpenRemote={openRemote}
+              onOpenRemote={() => askRemote("103")}
+              remoteLabel={REMOTE_PANEL["103"]}
               dropTarget={drag?.over ?? ""}
             />
           </div>
@@ -1224,10 +1237,34 @@ export function WallConsole() {
         </div>
       ) : null}
       {remotePresence.mounted ? (
-        <div className={`fixed inset-0 z-50 flex items-center justify-center bg-[#03102e]/55 ${remotePresence.visible ? "opacity-100" : "opacity-0"}`} style={motionStyle}>
-          <div className={`w-[min(32rem,92vw)] rounded-2xl border border-cyan-300/80 bg-[#071a4d] px-8 py-7 text-center shadow-[0_0_32px_rgba(80,200,255,0.2)] ${remotePresence.visible ? "translate-y-0 scale-100" : "translate-y-4 scale-95"}`} style={motionStyle}>
-            <p className="text-[11px] tracking-[0.18em] text-cyan-100/70">REMOTE DESKTOP</p>
-            <p className="mt-2 text-2xl font-semibold tracking-wide">{remoteCue || "Opening the remote desktop…"}</p>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="remote-ask-title"
+          onClick={() => setRemoteAsk("")}
+          className={`fixed inset-0 z-50 flex items-center justify-center bg-[#03102e]/60 backdrop-blur-[2px] ${remotePresence.visible ? "opacity-100" : "opacity-0"} ${remoteAsk ? "" : "pointer-events-none"}`}
+          style={motionStyle}
+        >
+          <div
+            onClick={(event) => event.stopPropagation()}
+            className={`w-[min(30rem,92vw)] rounded-2xl border border-cyan-300/80 bg-[#071a4d] px-8 pt-8 pb-7 text-center shadow-[0_0_40px_rgba(80,200,255,0.25)] ${remotePresence.visible ? "translate-y-0 scale-100" : "translate-y-4 scale-95"}`}
+            style={motionStyle}
+          >
+            <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-cyan-200/80 bg-gradient-to-b from-cyan-400/35 to-[#0a3a8c] shadow-[0_0_24px_rgba(80,200,255,0.45)]">
+              <RemoteIcon className="h-8 w-8" />
+            </span>
+            <p className="mt-4 text-[11px] tracking-[0.18em] text-cyan-100/70">
+              {REMOTE_PANEL[remoteComputer].toUpperCase()} · {GROUP_LABEL[remoteComputer].toUpperCase()}
+            </p>
+            <p id="remote-ask-title" className="mt-2 text-2xl font-semibold tracking-wide">
+              Do you want to access this panel?
+            </p>
+            <div className="mt-6 grid grid-cols-2 gap-3">
+              <GlowButton onClick={() => setRemoteAsk("")}>No</GlowButton>
+              <GlowButton active onClick={() => void runRemote(remoteComputer)}>
+                Yes
+              </GlowButton>
+            </div>
           </div>
         </div>
       ) : null}
@@ -1247,6 +1284,7 @@ function PanelFrame({
   onSelect,
   onPress,
   onOpenRemote,
+  remoteLabel,
   dropTarget,
 }: {
   panel: PanelId
@@ -1259,7 +1297,8 @@ function PanelFrame({
   thumbStamp: number
   onSelect: (selection: Selection) => void
   onPress: () => void
-  onOpenRemote: (screenId: string) => void
+  onOpenRemote: () => void
+  remoteLabel: string
   dropTarget: string
 }) {
   const ids = rows.flat().map((screen) => screen.id)
@@ -1290,6 +1329,7 @@ function PanelFrame({
         onSelect={(screen) => onSelect({ panel, screen })}
         onPress={onPress}
         onOpenRemote={onOpenRemote}
+        remoteLabel={remoteLabel}
         dropTarget={dropTarget}
       />
     </section>
@@ -1309,6 +1349,7 @@ function ComputerFrame({
   onSelectScreen,
   onPress,
   onOpenRemote,
+  remoteLabel,
   dropTarget,
 }: {
   className?: string
@@ -1322,7 +1363,8 @@ function ComputerFrame({
   onSelectFrame: () => void
   onSelectScreen: (screen: string) => void
   onPress: () => void
-  onOpenRemote: (screenId: string) => void
+  onOpenRemote: () => void
+  remoteLabel: string
   dropTarget: string
 }) {
   return (
@@ -1343,6 +1385,7 @@ function ComputerFrame({
         onSelect={onSelectScreen}
         onPress={onPress}
         onOpenRemote={onOpenRemote}
+        remoteLabel={remoteLabel}
         dropTarget={dropTarget}
       />
     </div>
@@ -1358,6 +1401,7 @@ function ScreenWall({
   onSelect,
   onPress,
   onOpenRemote,
+  remoteLabel,
   dropTarget,
 }: {
   rows: Screen[][]
@@ -1367,20 +1411,21 @@ function ScreenWall({
   thumbStamp: number
   onSelect: (screenId: string) => void
   onPress: () => void
-  onOpenRemote: (screenId: string) => void
+  onOpenRemote: () => void
+  remoteLabel: string
   dropTarget: string
 }) {
   const columns = rows.reduce((count, row) => Math.max(count, row.length), 1)
   const rowCount = rows.length
   return (
     <div
-      className="grid w-full gap-1 p-5"
+      className="relative grid w-full gap-1 p-5"
       style={{
         gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
         gridTemplateRows: `repeat(${rowCount}, auto)`,
       }}
     >
-      {rows.flat().map((screen) => (
+      {rows.flat().map((screen, index) => (
         <ScreenButton
           key={screen.id}
           screen={screen}
@@ -1388,13 +1433,42 @@ function ScreenWall({
           selected={selection.screen === screen.id}
           on={power[screen.id]}
           thumbStamp={thumbStamp}
+          labelTop={columns === 1 && index === rowCount / 2 - 1}
           onSelect={() => onSelect(screen.id)}
           onPress={onPress}
-          onOpenRemote={() => onOpenRemote(screen.id)}
           dropTarget={dropTarget}
         />
       ))}
+      <RemoteButton label={remoteLabel} onClick={onOpenRemote} />
     </div>
+  )
+}
+
+function RemoteIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={className}>
+      <rect x="2.5" y="3.5" width="19" height="13" rx="2" />
+      <path d="M8.5 20.5h7M12 16.5v4" />
+      <path d="M9 12.5l5.5-5.5M10.5 7h4v4" />
+    </svg>
+  )
+}
+
+function RemoteButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={`Remote access to ${label}`}
+      title={`Remote access to ${label}`}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation()
+        onClick()
+      }}
+      className="absolute top-1/2 left-1/2 z-20 flex h-12 w-12 -translate-x-1/2 -translate-y-1/2 touch-manipulation items-center justify-center rounded-full border border-cyan-200/90 bg-gradient-to-b from-[#1aa3e8] to-[#0a3a8c] text-white shadow-[0_0_0_4px_rgba(7,26,77,0.85),0_0_18px_rgba(80,200,255,0.55)] transition-[transform,box-shadow] duration-200 hover:shadow-[0_0_0_4px_rgba(7,26,77,0.85),0_0_26px_rgba(120,220,255,0.8)] active:scale-90"
+    >
+      <RemoteIcon className="h-6 w-6" />
+    </button>
   )
 }
 
@@ -1437,9 +1511,9 @@ function ScreenButton({
   selected,
   on,
   thumbStamp,
+  labelTop = false,
   onSelect,
   onPress,
-  onOpenRemote,
   dropTarget,
 }: {
   screen: Screen
@@ -1447,9 +1521,9 @@ function ScreenButton({
   selected: boolean
   on: boolean
   thumbStamp: number
+  labelTop?: boolean
   onSelect: () => void
   onPress: () => void
-  onOpenRemote: () => void
   dropTarget: string
 }) {
   const group = preset.groups[screen.id] ?? 0
@@ -1469,10 +1543,6 @@ function ScreenButton({
         event.stopPropagation()
         onSelect()
       }}
-      onDoubleClick={(event) => {
-        event.stopPropagation()
-        onOpenRemote()
-      }}
       className="relative aspect-video w-full min-w-0 touch-manipulation overflow-hidden rounded-sm border text-center transition-[border-color,box-shadow,background-color] duration-200"
       style={{
         borderColor: hot || selected ? "#ffffff" : color,
@@ -1483,7 +1553,7 @@ function ScreenButton({
       <span className="absolute inset-0">
         <ScreenThumb id={screen.id} stamp={thumbStamp} dim={!on} />
       </span>
-      <span className="pointer-events-none absolute inset-x-0 bottom-1 z-10 px-1 [text-shadow:0_1px_3px_rgba(0,0,0,0.85)]">
+      <span className={`pointer-events-none absolute inset-x-0 z-10 px-1 [text-shadow:0_1px_3px_rgba(0,0,0,0.85)] ${labelTop ? "top-1" : "bottom-1"}`}>
         <span className="block text-sm font-semibold leading-tight">{number}</span>
         <span className="block text-[10px] leading-tight text-cyan-50/90">{screen.hdmi}</span>
       </span>
