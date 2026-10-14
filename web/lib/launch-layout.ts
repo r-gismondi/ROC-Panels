@@ -279,28 +279,67 @@ export function layoutAccount() {
   return { user: user || "Administrator", password }
 }
 
+// The pedestal rebuild deletes dist, so the last layout lives in the user profile.
+function layoutStateDir() {
+  const base = process.platform === "win32" && process.env.LOCALAPPDATA ? process.env.LOCALAPPDATA : os.tmpdir()
+  return path.join(base, "ROC-Panels", "layout-state")
+}
+
 function layoutStateFile(computer: string) {
+  return path.join(layoutStateDir(), `${computer}.txt`)
+}
+
+function legacyLayoutStateFile(computer: string) {
   return path.join(installRoot(), "layout-state", `${computer}.txt`)
+}
+
+function writePresetFile(file: string, preset: string) {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const temporary = `${file}.${process.pid}.tmp`
+  fs.writeFileSync(temporary, preset, "ascii")
+  try {
+    fs.renameSync(temporary, file)
+  } catch {
+    try {
+      fs.rmSync(file, { force: true })
+      fs.renameSync(temporary, file)
+    } catch (retry) {
+      fs.rmSync(temporary, { force: true })
+      throw retry
+    }
+  }
+}
+
+function readPresetFile(file: string, allowed: string[]) {
+  try {
+    const text = fs.readFileSync(file, "utf8").trim()
+    return allowed.includes(text) ? text : ""
+  } catch {
+    return ""
+  }
 }
 
 function rememberLayout(computer: string, preset: string) {
   const allowed = ALLOWED[computer]
-  if (!allowed?.includes(preset)) return
-  const file = layoutStateFile(computer)
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const temporary = `${file}.${process.pid}.tmp`
-  fs.writeFileSync(temporary, preset, "ascii")
-  fs.renameSync(temporary, file)
+  if (!allowed?.includes(preset) || preset === "close") return
+  writePresetFile(layoutStateFile(computer), preset)
 }
 
 export function readLayoutState() {
   const layouts: Record<string, string> = { "101": "", "102": "", "103": "" }
   for (const computer of Object.keys(layouts)) {
-    try {
-      const text = fs.readFileSync(layoutStateFile(computer), "utf8").trim()
-      if (ALLOWED[computer]?.includes(text)) layouts[computer] = text
-    } catch {
-      // This computer has not accepted a layout command yet.
+    const allowed = ALLOWED[computer] ?? []
+    const current = readPresetFile(layoutStateFile(computer), allowed)
+    const legacy = current ? "" : readPresetFile(legacyLayoutStateFile(computer), allowed)
+    const saved = current || legacy
+    if (!saved) continue
+    layouts[computer] = saved
+    if (!current) {
+      try {
+        writePresetFile(layoutStateFile(computer), saved)
+      } catch {
+        // The older copy still answers until the profile folder can be written.
+      }
     }
   }
   return layouts
