@@ -32,7 +32,7 @@ const REMOTE_PANEL: Record<Computer, string> = {
   "103": "Panel 3",
 }
 
-type Selection = { panel: PanelId; screen: string | "all" }
+type Selection = { panel: PanelId; screen: string | "all" | "every" }
 
 const PANEL_1: Screen[][] = [
   [
@@ -338,8 +338,10 @@ export function WallConsole() {
   const panel = selection.panel
   const computer3Scope = selection.panel === 2 && (selection.screen === "computer-3" || COMPUTER_3_IDS.includes(selection.screen))
   const computer2Scope = selection.panel === 2 && (selection.screen === "computer-2" || COMPUTER_2_IDS.includes(selection.screen))
-  const targets =
-    selection.screen === "all"
+  const everyScreen = selection.screen === "every"
+  const targets = everyScreen
+    ? SCREENS.map((screen) => screen.id)
+    : selection.screen === "all"
       ? IDS[panel]
       : selection.screen === "computer-2"
         ? COMPUTER_2_IDS
@@ -367,18 +369,25 @@ export function WallConsole() {
   const remotePresence = usePresence(Boolean(remoteAsk))
   if (remoteAsk) remoteHold.current = remoteAsk
   const remoteComputer = remoteAsk || remoteHold.current
-  const scopeLabel =
-    selection.screen === "all" ? "WHOLE PANEL" : selection.screen === "computer-2" || selection.screen === "computer-3" ? "SCREENS" : "ONE SCREEN"
-  const scopeTitle =
-    selection.screen === "all"
+  const scopeLabel = everyScreen
+    ? "ALL SCREENS"
+    : selection.screen === "all"
+      ? "WHOLE PANEL"
+      : selection.screen === "computer-2" || selection.screen === "computer-3"
+        ? "SCREENS"
+        : "ONE SCREEN"
+  const scopeTitle = everyScreen
+    ? "Panels 1 and 2"
+    : selection.screen === "all"
       ? `Panel ${panel}`
       : selection.screen === "computer-2"
         ? "Screens 9–12 and 14–17"
         : selection.screen === "computer-3"
           ? "Screens 13 and 18"
           : current?.id
-  const scopeDetail =
-    selection.screen === "all"
+  const scopeDetail = everyScreen
+    ? `All ${targets.length} screens. Tap a panel or one screen to adjust it alone.`
+    : selection.screen === "all"
       ? `All ${targets.length} screens. Tap one screen to adjust it alone.`
       : selection.screen === "computer-2" || selection.screen === "computer-3"
         ? "Tap the panel edge to adjust every screen on panel 2."
@@ -574,6 +583,10 @@ export function WallConsole() {
   }
 
   async function closeSelectedEdge() {
+    if (selection.screen === "every") {
+      await closeAllEdge()
+      return
+    }
     if (selection.screen === "all") {
       if (panel === 1) await closeComputers(["101"], "Closed Edge on screens 1–8.")
       else await closeComputers(["102", "103"], "Closed Edge on screens 9–18.")
@@ -968,7 +981,10 @@ export function WallConsole() {
               <p className="mt-1 line-clamp-2 text-sm leading-5 text-cyan-100/80">{scopeDetail}</p>
             </div>
 
-            <div className="grid w-52 shrink-0 grid-cols-2 gap-2">
+            <div className="grid w-80 shrink-0 grid-cols-3 gap-2">
+              <GlowButton active={everyScreen} onClick={() => setSelection({ panel, screen: everyScreen ? "all" : "every" })}>
+                Select All
+              </GlowButton>
               <GlowButton active={allOn} onClick={() => applyPower(true)}>
                 On
               </GlowButton>
@@ -1076,7 +1092,7 @@ export function WallConsole() {
         <section
           onClick={() => setSelection({ panel: 2, screen: "all" })}
           className={`flex h-full min-h-0 cursor-pointer flex-col rounded-2xl border bg-[#071a4d]/70 p-3 pb-5 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
-            selection.panel === 2 && selection.screen === "all"
+            (selection.panel === 2 && selection.screen === "all") || everyScreen
               ? "border-white shadow-[0_0_24px_rgba(180,230,255,0.35)]"
               : selection.panel === 2
                 ? "border-cyan-300/70"
@@ -1371,7 +1387,7 @@ function PanelFrame({
   dropTarget: string
 }) {
   const ids = rows.flat().map((screen) => screen.id)
-  const whole = selection.panel === panel && selection.screen === "all"
+  const whole = (selection.panel === panel && selection.screen === "all") || selection.screen === "every"
   const allOn = ids.every((id) => power[id])
   const allOff = ids.every((id) => !power[id])
 

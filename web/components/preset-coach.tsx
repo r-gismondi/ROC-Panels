@@ -48,9 +48,9 @@ export function PresetCoach({ rows, preset }: { rows: Screen[][]; preset: Preset
         [
           { left: "34%", top: "24%", transform: "scale(1)", offset: 0 },
           { left: "34%", top: "24%", transform: "scale(1)", offset: 0.3 },
-          { left: "84%", top: "80%", transform: "scale(1)", offset: 0.5 },
-          { left: "84%", top: "80%", transform: "scale(0.92)", offset: 0.55 },
-          { left: "84%", top: "80%", transform: "scale(1)", offset: 0.9 },
+          { left: "10%", top: "80%", transform: "scale(1)", offset: 0.5 },
+          { left: "10%", top: "80%", transform: "scale(0.92)", offset: 0.55 },
+          { left: "10%", top: "80%", transform: "scale(1)", offset: 0.9 },
           { left: "34%", top: "24%", transform: "scale(1)", offset: 1 },
         ],
         timing,
@@ -128,15 +128,15 @@ export function PresetCoach({ rows, preset }: { rows: Screen[][]; preset: Preset
             </div>
           ))}
         </div>
-        <p className="absolute bottom-4 left-4 max-w-[60%] text-xs leading-5 text-cyan-100/80">
-          The screens show the preview. Confirm opens Edge in these windows. Cancel keeps the current layout.
-        </p>
         <span
           data-coach="confirm"
-          className="pointer-events-none absolute right-4 bottom-4 rounded-lg border border-cyan-200/60 bg-cyan-400/25 px-4 py-2 text-sm tracking-wide"
+          className="pointer-events-none absolute left-4 bottom-4 rounded-lg border border-cyan-200/60 bg-cyan-400/25 px-4 py-2 text-sm tracking-wide"
         >
           Confirm
         </span>
+        <p className="absolute right-4 bottom-4 left-32 text-xs leading-5 text-cyan-100/80">
+          The screens show the preview. Confirm opens Edge in these windows. Cancel keeps the current layout.
+        </p>
         <div data-coach="cursor" className="pointer-events-none absolute left-[34%] top-[24%]">
           <span data-coach="press" className="absolute left-0.5 top-1 h-2.5 w-2.5 rounded-full border-2 border-cyan-100 opacity-0" />
           <svg viewBox="0 0 24 24" className="h-7 w-7 fill-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.65)]" aria-hidden="true">
