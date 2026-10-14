@@ -420,10 +420,46 @@ if ($opened.Count -eq 0) { Write-Output "Opened 0 windows."; exit 1 }
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+# Each Edge window sits inside a section form as a child window, so Windows gives taps and keys to the form.
+# The form passes keyboard focus and activation on to its Edge window, so pages accept typing.
+if (-not ("PanelHost" -as [type])) {
+    Add-Type -ReferencedAssemblies System.Windows.Forms -WarningAction SilentlyContinue -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+public class PanelHost : Form {
+    [DllImport("user32.dll")] static extern IntPtr SetFocus(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern IntPtr GetFocus();
+    [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
+    IntPtr child = IntPtr.Zero;
+
+    public void Adopt(IntPtr hwnd) {
+        child = hwnd;
+        if (IsHandleCreated && GetFocus() == Handle) Forward();
+    }
+
+    void Forward() {
+        if (child == IntPtr.Zero || !IsWindow(child)) return;
+        SendMessage(child, 0x0006, (IntPtr)1, IntPtr.Zero);
+        SetFocus(child);
+    }
+
+    protected override void WndProc(ref Message m) {
+        base.WndProc(ref m);
+        if (m.Msg == 0x0007) {
+            Forward();
+        } else if (m.Msg == 0x0006 && ((int)(long)m.WParam & 0xFFFF) == 0 && child != IntPtr.Zero && IsWindow(child)) {
+            SendMessage(child, 0x0006, IntPtr.Zero, IntPtr.Zero);
+        }
+    }
+}
+"@
+}
 Set-Content -Path $hostPidFile -Value $PID
 $script:hostsLeft = 0
 foreach ($item in $opened) {
-    $form = New-Object System.Windows.Forms.Form
+    $form = New-Object PanelHost
     $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
     $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
     $form.Location = New-Object System.Drawing.Point $item.X, $item.Y
@@ -435,7 +471,9 @@ foreach ($item in $opened) {
     $form.Show()
     [void][PanelWin]::PrepareHost($form.Handle)
     [void][PanelWin]::Fit($item.Hwnd, $form.Handle, $item.X, $item.Y, $item.W, $item.H)
+    $form.Adopt($item.Hwnd)
     $item | Add-Member -NotePropertyName Host -NotePropertyValue $form.Handle -Force
+    $item | Add-Member -NotePropertyName Form -NotePropertyValue $form -Force
     $script:hostsLeft += 1
     $form.Add_FormClosed({
         $script:hostsLeft -= 1
@@ -700,6 +738,7 @@ $urlTimer.Add_Tick({
                 [void][PanelWin]::ShowWindow($match.Host, 9)
                 [void][PanelWin]::Place($hwnd, $match.X, $match.Y, $match.W, $match.H)
                 [void][PanelWin]::Fit($hwnd, $match.Host, $match.X, $match.Y, $match.W, $match.H)
+                $match.Form.Adopt($hwnd)
                 if ($match.Hwnd -and $match.Hwnd -ne [IntPtr]::Zero) {
                     [void][PanelWin]::CloseWindow($match.Hwnd)
                     [void]$known.Remove($match.Hwnd.ToInt64())
@@ -840,6 +879,7 @@ $appTimer.Add_Tick({
             }
             $match.Hwnd = $hwnd
             $match.Kind = "app"
+            $match.Form.Adopt([IntPtr]::Zero)
             $known[$hwnd.ToInt64()] = $true
             Save-ZoneHwnds
             [System.IO.File]::WriteAllText($resultPath, "ok", $utf8)
@@ -861,6 +901,7 @@ function Close-OpenedZone($Item) {
     }
     $Item.Hwnd = [IntPtr]::Zero
     $Item.Kind = "empty"
+    if ($Item.Form) { $Item.Form.Adopt([IntPtr]::Zero) }
     try { if ($Item.Host -and $Item.Host -ne [IntPtr]::Zero) { [void][PanelWin]::ShowWindow($Item.Host, 5) } } catch {}
     Save-ZoneHwnds
 }
