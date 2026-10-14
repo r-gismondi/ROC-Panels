@@ -18,7 +18,8 @@ $stamp = Join-Path $root "watcher-script.txt"
 try {
     $launchHash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLower()
     $startHash = (Get-FileHash -LiteralPath (Join-Path $root "Start-Watch.bat") -Algorithm SHA256).Hash.ToLower()
-    Set-Content -LiteralPath $stamp -Value "$launchHash $startHash" -Encoding Ascii
+    $fieldHash = (Get-FileHash -LiteralPath (Join-Path $root "Watch-TypeField.ps1") -Algorithm SHA256).Hash.ToLower()
+    Set-Content -LiteralPath $stamp -Value "$launchHash $startHash $fieldHash" -Encoding Ascii
 } catch {}
 
 # The touch keyboard for remote sessions opens on the pedestal, so a copy of the old panel-side
@@ -29,6 +30,24 @@ try {
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 } catch {}
 Remove-Item -LiteralPath (Join-Path $root "Watch-Keyboard.ps1"), (Join-Path $root "keyboard-alive.txt") -Force -ErrorAction SilentlyContinue
+
+$field = Join-Path $root "Watch-TypeField.ps1"
+$fieldAlive = Join-Path $root "type-field-alive.txt"
+$script:lastFieldCheck = [datetime]::MinValue
+function Start-FieldWatch {
+    $now = Get-Date
+    if (($now - $script:lastFieldCheck).TotalSeconds -lt 5) { return }
+    $script:lastFieldCheck = $now
+    if (-not (Test-Path -LiteralPath $field)) { return }
+    if (Test-Path -LiteralPath $fieldAlive) {
+        try {
+            $text = (Get-Content -LiteralPath $fieldAlive -Raw -ErrorAction Stop).Trim()
+            $beat = [datetimeoffset]::Parse($text)
+            if (([datetimeoffset]::Now - $beat).TotalSeconds -lt 5) { return }
+        } catch {}
+    }
+    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile", "-MTA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", $field -WindowStyle Hidden
+}
 
 $thumbs = Join-Path $root "Capture-Thumbs.ps1"
 $thumbAlive = Join-Path $root "thumbs\alive.txt"
@@ -58,9 +77,11 @@ function Update-Beat {
 }
 
 Start-ThumbCapture
+Start-FieldWatch
 while ($true) {
     Update-Beat
     Start-ThumbCapture
+    Start-FieldWatch
     $items = @(Get-ChildItem -LiteralPath $queue -Filter *.txt -ErrorAction SilentlyContinue | Sort-Object Name)
     foreach ($item in $items) {
         $bat = ""

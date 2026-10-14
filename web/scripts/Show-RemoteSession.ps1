@@ -3,14 +3,18 @@
 # so the console caption buttons cannot show around it.
 # The X on the Tabbed mode bar only hides the bar, so an X that disconnects is kept on top of it.
 # A keyboard button beside the X opens the Windows touch keyboard for typing on the touchscreen.
+# The keyboard also rises by itself when a text field on the panel computer takes focus, and lowers when it leaves.
 param(
     [Parameter(Mandatory = $true)][string]$Name,
-    [Parameter(Mandatory = $true)][string]$Url
+    [Parameter(Mandatory = $true)][string]$Url,
+    [string]$Computer = ""
 )
 
 $ErrorActionPreference = "Stop"
 $sessionPattern = '^https://remotedesktop\.google\.com/access/session/[0-9a-fA-F-]+$'
+$computerPattern = '^(\d{1,3}\.){3}\d{1,3}$'
 if ($Url -notmatch $sessionPattern) { exit 1 }
+if ($Computer -and $Computer -notmatch $computerPattern) { $Computer = "" }
 
 New-Item -ItemType Directory -Force -Path "C:\layouts" | Out-Null
 $requestPath = "C:\layouts\remote-session.request"
@@ -25,7 +29,7 @@ try {
     $ownsMutex = $true
 }
 if (-not $ownsMutex) {
-    [System.IO.File]::WriteAllText($requestPath, ($Name + "`t" + $Url))
+    [System.IO.File]::WriteAllText($requestPath, ($Name + "`t" + $Url + "`t" + $Computer))
     exit 0
 }
 
@@ -405,6 +409,40 @@ public static class TouchKeyboard {
         Process.Start(start);
     }
 }
+
+// Reads the panel computer's type-field.txt over the network on its own thread, so a slow share never stalls the X.
+public static class RemoteField {
+    static volatile string _path = "";
+    static volatile string _state = "";
+    static volatile int _reads;
+    static Thread _thread;
+
+    public static string State { get { return _state; } }
+    public static int Reads { get { return _reads; } }
+
+    public static void Watch(string path) {
+        _path = path ?? "";
+        _state = "";
+        _reads = 0;
+        if (_thread != null) return;
+        _thread = new Thread(() => {
+            while (true) {
+                string current = _path;
+                if (current.Length > 0) {
+                    string text = "";
+                    try { text = System.IO.File.ReadAllText(current).Trim(); } catch (System.IO.FileNotFoundException) { } catch { text = null; }
+                    if (text != null && current == _path) {
+                        _state = text;
+                        _reads++;
+                    }
+                }
+                Thread.Sleep(200);
+            }
+        });
+        _thread.IsBackground = true;
+        _thread.Start();
+    }
+}
 '@ -Language CSharp
 
 # The X, the full-screen blocker and the keyboard button take taps but never become the active window,
@@ -474,6 +512,7 @@ $ghostOpacity = 0.01
 
 $script:Name = $Name
 $script:Url = $Url
+$script:Computer = $Computer
 $script:hwnd = [IntPtr]::Zero
 $script:known = @{}
 $script:launchedAt = Get-Date
@@ -507,7 +546,9 @@ $script:surface = $null
 $script:panelOpen = $false
 $script:lastSurfaceFocus = [datetime]::MinValue
 $script:keyboardShown = $false
+$script:keyboardAuto = $false
 $script:keysHot = $false
+$script:fieldLast = $null
 $script:lastBarSample = [datetime]::MinValue
 
 function Get-EdgeWindows {
@@ -628,6 +669,8 @@ function Start-Session {
     $script:surface = $null
     $script:panelOpen = $false
     $script:lastSurfaceFocus = [datetime]::MinValue
+    $script:fieldLast = $null
+    [RemoteField]::Watch($(if ($script:Computer) { "\\$($script:Computer)\c$\layouts\type-field.txt" } else { "" }))
     $start = New-Object System.Diagnostics.ProcessStartInfo
     $start.FileName = $edge
     $start.Arguments = "--app=`"$($script:Url)`" --new-window --start-fullscreen --force-renderer-accessibility"
@@ -779,13 +822,29 @@ function Update-SurfaceFocus {
 }
 
 function Switch-TouchKeyboard {
-    [RemoteWin]::Focus($script:hwnd)
-    [void](Set-SurfaceFocus "keyboard button")
     if ([TouchKeyboard]::IsShowing()) {
-        [void][TouchKeyboard]::Toggle($script:hwnd)
-        $script:keyboardShown = $false
+        Close-TouchKeyboard "keyboard button"
+        return
+    }
+    Open-TouchKeyboard "keyboard button"
+}
+
+function Close-TouchKeyboard([string]$Reason) {
+    $script:keyboardAuto = $false
+    if ([TouchKeyboard]::IsShowing()) { [void][TouchKeyboard]::Toggle($script:hwnd) }
+    $script:keyboardShown = $false
+    $keys.Invalidate()
+    Write-Log "Lowered the touch keyboard ($Reason)."
+}
+
+# A keyboard raised for a text field lowers again when that field loses focus; one opened with the button stays.
+function Open-TouchKeyboard([string]$Reason, [switch]$ForField) {
+    [RemoteWin]::Focus($script:hwnd)
+    [void](Set-SurfaceFocus $Reason)
+    $script:keyboardAuto = [bool]$ForField
+    if ([TouchKeyboard]::IsShowing()) {
+        $script:keyboardShown = $true
         $keys.Invalidate()
-        Write-Log "Lowered the touch keyboard."
         return
     }
     [TouchKeyboard]::StartHost()
@@ -799,13 +858,36 @@ function Switch-TouchKeyboard {
     }
     $script:keyboardShown = [TouchKeyboard]::IsShowing()
     $keys.Invalidate()
-    Write-Log $(if ($script:keyboardShown) { "Raised the touch keyboard." } else { "The touch keyboard did not open." })
+    Write-Log $(if ($script:keyboardShown) { "Raised the touch keyboard ($Reason)." } else { "The touch keyboard did not open." })
 }
 
 function Hide-TouchKeyboard {
+    $script:keyboardAuto = $false
     if (-not $script:keyboardShown) { return }
     $script:keyboardShown = $false
     try { if ([TouchKeyboard]::IsShowing()) { [void][TouchKeyboard]::Toggle($script:hwnd) } } catch {}
+}
+
+# type-field.txt on the panel computer reads "on <stamp>" or "off <stamp>". What it says when the session
+# opens is old news, so only later changes raise or lower the keyboard.
+function Update-RemoteField {
+    if (-not $script:Computer -or -not $script:fullDone) { return }
+    if ($null -eq $script:fieldLast) {
+        if ([RemoteField]::Reads -gt 0) {
+            $script:fieldLast = [RemoteField]::State
+            Write-Log "Watching text fields on $($script:Computer)."
+        }
+        return
+    }
+    $state = [RemoteField]::State
+    if ($state -eq $script:fieldLast) { return }
+    $script:fieldLast = $state
+    if ($state -like 'on *') {
+        if (-not [RemoteWin]::IsForeground($script:hwnd)) { return }
+        Open-TouchKeyboard "text field" -ForField
+    } elseif ($state -like 'off *' -and $script:keyboardAuto -and $script:keyboardShown) {
+        Close-TouchKeyboard "text field left"
+    }
 }
 
 # The tab bar settles into its final color after full screen, so the keyboard button keeps matching the bar beside it.
@@ -824,6 +906,7 @@ function Update-KeyboardState {
     if (-not $script:keyboardShown) { return }
     if ([TouchKeyboard]::IsShowing()) { return }
     $script:keyboardShown = $false
+    $script:keyboardAuto = $false
     $keys.Invalidate()
 }
 
@@ -1050,8 +1133,8 @@ function Read-Request {
     $text = ""
     try { $text = [System.IO.File]::ReadAllText($requestPath) } catch { return }
     Remove-Item -LiteralPath $requestPath -Force -ErrorAction SilentlyContinue
-    $parts = $text -split "`t", 2
-    if ($parts.Count -ne 2) { return }
+    $parts = $text -split "`t", 3
+    if ($parts.Count -lt 2) { return }
     $nextUrl = $parts[1].Trim()
     if ($nextUrl -notmatch $sessionPattern) { return }
     if ($nextUrl -eq $script:Url -and $script:hwnd -ne [IntPtr]::Zero) {
@@ -1066,6 +1149,7 @@ function Read-Request {
     try { if ($lock.Visible) { $lock.Hide() } } catch {}
     $script:Name = $parts[0].Trim()
     $script:Url = $nextUrl
+    $script:Computer = if ($parts.Count -ge 3 -and $parts[2].Trim() -match $computerPattern) { $parts[2].Trim() } else { "" }
     Start-Session
 }
 
@@ -1250,6 +1334,7 @@ $timer.Add_Tick({
         }
 
         Update-SessionFrame
+        try { Update-RemoteField } catch { Write-Log "Text field: $($_.Exception.Message)" }
 
         $scanMs = 400
         if (((Get-Date) - $script:lastScan).TotalMilliseconds -ge $scanMs) {
