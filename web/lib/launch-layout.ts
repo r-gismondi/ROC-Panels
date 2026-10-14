@@ -125,7 +125,8 @@ function fileHash(file: string) {
 function watcherIdentity() {
   const launch = fileHash(path.join(scriptsDir(), "Watch-Launch.ps1"))
   const start = fileHash(path.join(scriptsDir(), "Start-Watch.bat"))
-  return `${launch} ${start}`
+  const field = fileHash(path.join(scriptsDir(), "Watch-TypeField.ps1"))
+  return `${launch} ${start} ${field}`
 }
 
 function watcherIsCurrent(host: string) {
@@ -166,7 +167,7 @@ function publishLayoutScript(host: string, computer: string) {
 function publishWatcher(host: string) {
   const root = layoutsRoot(host)
   fs.mkdirSync(root, { recursive: true })
-  for (const name of ["Watch-Launch.ps1", "Start-Watch.bat", "Launch-InSession.ps1", "Capture-Thumbs.ps1", "Start-Thumbs.bat"]) {
+  for (const name of ["Watch-Launch.ps1", "Start-Watch.bat", "Launch-InSession.ps1", "Capture-Thumbs.ps1", "Start-Thumbs.bat", "Watch-TypeField.ps1"]) {
     fs.copyFileSync(path.join(scriptsDir(), name), path.join(root, name))
   }
 }
@@ -579,7 +580,7 @@ export function openRemote(computer: string): LaunchResult {
   if (host && account.password) void ensureWatcher(host, account.user, account.password).catch(() => undefined)
   const child = spawn(
     "powershell.exe",
-    ["-NoProfile", "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", script, "-Name", session.name, "-Url", session.url],
+    ["-NoProfile", "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", script, "-Name", session.name, "-Url", session.url, "-Computer", host ?? ""],
     { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
   )
   child.stdout.resume()
