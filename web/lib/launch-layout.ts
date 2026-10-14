@@ -125,7 +125,8 @@ function fileHash(file: string) {
 function watcherIdentity() {
   const launch = fileHash(path.join(scriptsDir(), "Watch-Launch.ps1"))
   const start = fileHash(path.join(scriptsDir(), "Start-Watch.bat"))
-  return `${launch} ${start}`
+  const keyboard = fileHash(path.join(scriptsDir(), "Watch-Keyboard.ps1"))
+  return `${launch} ${start} ${keyboard}`
 }
 
 function watcherIsCurrent(host: string) {
@@ -166,7 +167,7 @@ function publishLayoutScript(host: string, computer: string) {
 function publishWatcher(host: string) {
   const root = layoutsRoot(host)
   fs.mkdirSync(root, { recursive: true })
-  for (const name of ["Watch-Launch.ps1", "Start-Watch.bat", "Launch-InSession.ps1", "Capture-Thumbs.ps1", "Start-Thumbs.bat"]) {
+  for (const name of ["Watch-Launch.ps1", "Start-Watch.bat", "Launch-InSession.ps1", "Capture-Thumbs.ps1", "Start-Thumbs.bat", "Watch-Keyboard.ps1"]) {
     fs.copyFileSync(path.join(scriptsDir(), name), path.join(root, name))
   }
 }
@@ -574,6 +575,9 @@ export function openRemote(computer: string): LaunchResult {
   }
   const script = path.join(scriptsDir(), "Show-RemoteSession.ps1")
   if (!fs.existsSync(script)) return { ok: false, message: "The remote desktop script is missing from this stand." }
+  const host = HOSTS[computer]
+  const account = layoutAccount()
+  if (host && account.password) void ensureWatcher(host, account.user, account.password).catch(() => undefined)
   const child = spawn(
     "powershell.exe",
     ["-NoProfile", "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", script, "-Name", session.name, "-Url", session.url],
