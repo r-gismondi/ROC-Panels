@@ -2,6 +2,7 @@
 # The session is brought in front of the console and stretched over the whole screen,
 # so the console caption buttons cannot show around it.
 # The X on the Tabbed mode bar only hides the bar, so an X that disconnects is kept on top of it.
+# A keyboard button beside the X opens the Windows touch keyboard for typing on the touchscreen.
 param(
     [Parameter(Mandatory = $true)][string]$Name,
     [Parameter(Mandatory = $true)][string]$Url
@@ -48,6 +49,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 public static class RemoteWin {
     public delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
@@ -121,8 +123,24 @@ public static class RemoteWin {
     static EnumProc _keep;
     static bool _unlocked;
     static HookProc _hookProc;
-    static IntPtr _hook;
-    static IntPtr _lockWindow;
+    static volatile IntPtr _hook;
+    static volatile IntPtr _lockWindow;
+    static Thread _hookThread;
+    static uint _hookThreadId;
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct MSG {
+        public IntPtr hwnd;
+        public uint message;
+        public IntPtr wParam;
+        public IntPtr lParam;
+        public uint time;
+        public POINT pt;
+    }
+
+    [DllImport("user32.dll")] static extern int GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+    [DllImport("user32.dll")] static extern bool PeekMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax, uint wRemoveMsg);
+    [DllImport("user32.dll")] static extern bool PostThreadMessage(uint idThread, uint msg, IntPtr wParam, IntPtr lParam);
 
     public static List<string> EdgeWindows() {
         var list = new List<string>();
@@ -187,6 +205,23 @@ public static class RemoteWin {
 
     public static bool IsForeground(IntPtr hwnd) {
         return hwnd != IntPtr.Zero && GetForegroundWindow() == hwnd;
+    }
+
+    public static IntPtr Foreground() { return GetForegroundWindow(); }
+
+    public static int ProcessOf(IntPtr hwnd) {
+        uint procId = 0;
+        if (hwnd != IntPtr.Zero) GetWindowThreadProcessId(hwnd, out procId);
+        return (int)procId;
+    }
+
+    public static string Label(IntPtr hwnd) {
+        if (hwnd == IntPtr.Zero) return "none";
+        var title = new StringBuilder(256);
+        GetWindowText(hwnd, title, title.Capacity);
+        string name = "";
+        try { name = Process.GetProcessById(ProcessOf(hwnd)).ProcessName; } catch { }
+        return name + " '" + title.ToString() + "'";
     }
 
     public static void Cover(IntPtr hwnd, int x, int y, int w, int h) {
@@ -257,25 +292,41 @@ public static class RemoteWin {
         mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
     }
 
+    // The hook has its own thread, so keys never wait for the UI Automation scans on the main thread.
     public static void LockFullscreenKeys(IntPtr hwnd) {
         _lockWindow = hwnd;
-        if (_hook != IntPtr.Zero) return;
-        _hookProc = (nCode, wParam, lParam) => {
-            if (nCode >= 0 && (wParam == (IntPtr)0x0100 || wParam == (IntPtr)0x0104)) {
-                var info = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
-                bool blocks = info.vkCode == 0x1B || info.vkCode == 0x7A;
-                if (blocks && (_lockWindow == IntPtr.Zero || GetForegroundWindow() == _lockWindow)) return (IntPtr)1;
-            }
-            return CallNextHookEx(_hook, nCode, wParam, lParam);
-        };
-        _hook = SetWindowsHookEx(13, _hookProc, GetModuleHandle(null), 0);
+        if (_hookThread != null) return;
+        var ready = new ManualResetEvent(false);
+        _hookThread = new Thread(() => {
+            _hookThreadId = GetCurrentThreadId();
+            _hookProc = (nCode, wParam, lParam) => {
+                if (nCode >= 0 && (wParam == (IntPtr)0x0100 || wParam == (IntPtr)0x0104)) {
+                    var info = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
+                    bool blocks = info.vkCode == 0x1B || info.vkCode == 0x7A;
+                    IntPtr locked = _lockWindow;
+                    if (blocks && (locked == IntPtr.Zero || GetForegroundWindow() == locked)) return (IntPtr)1;
+                }
+                return CallNextHookEx(_hook, nCode, wParam, lParam);
+            };
+            _hook = SetWindowsHookEx(13, _hookProc, GetModuleHandle(null), 0);
+            MSG msg;
+            PeekMessage(out msg, IntPtr.Zero, 0, 0, 0);
+            ready.Set();
+            while (GetMessage(out msg, IntPtr.Zero, 0, 0) > 0) { }
+            if (_hook != IntPtr.Zero) UnhookWindowsHookEx(_hook);
+            _hook = IntPtr.Zero;
+        });
+        _hookThread.IsBackground = true;
+        _hookThread.Start();
+        ready.WaitOne(2000);
     }
 
     public static void UnlockFullscreenKeys() {
         _lockWindow = IntPtr.Zero;
-        if (_hook == IntPtr.Zero) return;
-        UnhookWindowsHookEx(_hook);
-        _hook = IntPtr.Zero;
+        if (_hookThread == null) return;
+        PostThreadMessage(_hookThreadId, 0x0012, IntPtr.Zero, IntPtr.Zero);
+        _hookThread.Join(1000);
+        _hookThread = null;
     }
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string className, string title);
@@ -289,13 +340,101 @@ public static class RemoteWin {
         if (hwnd == IntPtr.Zero || !IsWindow(hwnd) || above == IntPtr.Zero || !IsWindow(above)) return;
         SetWindowPos(hwnd, above, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
+}
 
-    public static void NoActivate(IntPtr hwnd) {
-        int ex = GetWindowLong(hwnd, -20);
-        SetWindowLong(hwnd, -20, ex | 0x08000000 | 0x00000080 | 0x00000008);
+// The Windows touch keyboard types into the foreground window, so its keys reach the session like physical ones.
+public static class TouchKeyboard {
+    [StructLayout(LayoutKind.Sequential)]
+    struct RECT { public int Left, Top, Right, Bottom; }
+
+    [ComImport, Guid("37c994e7-432b-4834-a2f7-dce1f13b834b"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface ITipInvocation { void Toggle(IntPtr hwnd); }
+
+    [ComImport, Guid("4ce576fa-83dc-4f88-951c-9d0782b4e376")]
+    class UIHostNoLaunch { }
+
+    [ComImport, Guid("5752238B-24F0-495A-82F1-2FD593056796"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IFrameworkInputPane {
+        [PreserveSig] int Advise(IntPtr window, IntPtr handler, out uint cookie);
+        [PreserveSig] int AdviseWithHWND(IntPtr hwnd, IntPtr handler, out uint cookie);
+        [PreserveSig] int Unadvise(uint cookie);
+        [PreserveSig] int Location(out RECT rect);
+    }
+
+    [ComImport, Guid("D5120AA3-46BA-44C5-822D-CA8092C1FC72")]
+    class FrameworkInputPane { }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string className, string title);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr hwnd, int index);
+
+    public static bool IsShowing() {
+        try {
+            var pane = (IFrameworkInputPane)new FrameworkInputPane();
+            try {
+                RECT rect;
+                if (pane.Location(out rect) == 0) return rect.Right > rect.Left && rect.Bottom > rect.Top;
+            } finally {
+                Marshal.ReleaseComObject(pane);
+            }
+        } catch { }
+        IntPtr tip = FindWindow("IPTip_Main_Window", null);
+        return tip != IntPtr.Zero && IsWindowVisible(tip) && (GetWindowLong(tip, -16) & 0x08000000) == 0;
+    }
+
+    public static bool Toggle(IntPtr hwnd) {
+        try {
+            var tip = (ITipInvocation)new UIHostNoLaunch();
+            try {
+                tip.Toggle(hwnd);
+            } finally {
+                Marshal.ReleaseComObject(tip);
+            }
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    public static void StartHost() {
+        if (Process.GetProcessesByName("TabTip").Length > 0) return;
+        string path = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles), @"microsoft shared\ink\TabTip.exe");
+        if (!System.IO.File.Exists(path)) return;
+        var start = new ProcessStartInfo(path);
+        start.UseShellExecute = true;
+        Process.Start(start);
     }
 }
 '@ -Language CSharp
+
+# The X, the full-screen blocker and the keyboard button take taps but never become the active window,
+# so keys keep going to the session.
+Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing -TypeDefinition @'
+using System;
+using System.Windows.Forms;
+
+public class GhostForm : Form {
+    protected override bool ShowWithoutActivation {
+        get { return true; }
+    }
+
+    protected override CreateParams CreateParams {
+        get {
+            CreateParams created = base.CreateParams;
+            created.ExStyle |= 0x08000000 | 0x00000080 | 0x00000008;
+            return created;
+        }
+    }
+
+    protected override void WndProc(ref Message m) {
+        if (m.Msg == 0x0021) {
+            m.Result = new IntPtr(3);
+            return;
+        }
+        base.WndProc(ref m);
+    }
+}
+'@ -Language CSharp -WarningAction SilentlyContinue
 
 [void][RemoteWin]::SetProcessDPIAware()
 $screen = [System.Windows.Forms.Screen]::PrimaryScreen
@@ -328,6 +467,8 @@ $cache.Add($AE::BoundingRectangleProperty)
 
 $barBlack = [System.Drawing.Color]::FromArgb(32, 33, 36)
 $closeRed = [System.Drawing.Color]::FromArgb(196, 43, 28)
+$keysHover = [System.Drawing.Color]::FromArgb(60, 64, 67)
+$keysOn = [System.Drawing.Color]::FromArgb(26, 115, 232)
 # Fully transparent windows do not take clicks; this is the faintest one that does.
 $ghostOpacity = 0.01
 
@@ -359,6 +500,15 @@ $script:lastNames = ""
 $script:hot = $false
 $script:ghost = $false
 $script:leaving = $false
+$script:lastInput = ""
+$script:surfaceLogged = $false
+$script:optionsLogged = $false
+$script:surface = $null
+$script:panelOpen = $false
+$script:lastSurfaceFocus = [datetime]::MinValue
+$script:keyboardShown = $false
+$script:keysHot = $false
+$script:lastBarSample = [datetime]::MinValue
 
 function Get-EdgeWindows {
     foreach ($line in [RemoteWin]::EdgeWindows()) {
@@ -393,6 +543,10 @@ function Set-SessionOrder {
     }
     [RemoteWin]::KeepOnTop($form.Handle)
     $under = $form.Handle
+    if ($keys.Visible) {
+        [RemoteWin]::KeepBelow($keys.Handle, $under)
+        $under = $keys.Handle
+    }
     if ($homeButton -ne [IntPtr]::Zero) {
         [RemoteWin]::KeepBelow($homeButton, $under)
         $under = $homeButton
@@ -411,7 +565,8 @@ function Update-SessionFrame {
     }
     $age = if ($script:foundAt) { ((Get-Date) - $script:foundAt).TotalSeconds } else { 0 }
     if (-not [RemoteWin]::IsForeground($script:hwnd)) {
-        if (-not $script:focused -or $age -lt 8) { [RemoteWin]::Focus($script:hwnd) }
+        $ours = [RemoteWin]::ProcessOf([RemoteWin]::Foreground()) -eq $PID
+        if (-not $script:focused -or $age -lt 8 -or $ours) { [RemoteWin]::Focus($script:hwnd) }
         if ([RemoteWin]::IsForeground($script:hwnd)) {
             $script:focused = $true
             Write-Log "Session is in front."
@@ -467,6 +622,12 @@ function Start-Session {
     $script:disconnect = $null
     $script:lastScan = [datetime]::MinValue
     $script:lastNames = ""
+    $script:lastInput = ""
+    $script:surfaceLogged = $false
+    $script:optionsLogged = $false
+    $script:surface = $null
+    $script:panelOpen = $false
+    $script:lastSurfaceFocus = [datetime]::MinValue
     $start = New-Object System.Diagnostics.ProcessStartInfo
     $start.FileName = $edge
     $start.Arguments = "--app=`"$($script:Url)`" --new-window --start-fullscreen --force-renderer-accessibility"
@@ -532,6 +693,156 @@ function Get-ScreenColor([int]$X, [int]$Y) {
     }
 }
 
+function Get-FocusedElement {
+    try { return $AE::FocusedElement } catch { return $null }
+}
+
+function Get-ElementLabel($element) {
+    if (-not $element) { return "none" }
+    try {
+        $current = $element.Current
+        return "$($current.ControlType.ProgrammaticName -replace '^ControlType\.', '') '$($current.Name)'"
+    } catch {
+        return "gone"
+    }
+}
+
+function Update-InputLog {
+    $foreground = [RemoteWin]::Foreground()
+    $where = if ($foreground -eq $script:hwnd) { "session" } else { [RemoteWin]::Label($foreground) }
+    $text = "foreground=$where focus=$(Get-ElementLabel (Get-FocusedElement))"
+    if ($text -ne $script:lastInput) {
+        $script:lastInput = $text
+        Write-Log "Input: $text"
+    }
+}
+
+# Chrome Remote Desktop forwards keys only while its remote screen, an Edit named Desktop, has focus.
+function Get-Surface {
+    if ($script:surface) {
+        try {
+            $rect = $script:surface.Current.BoundingRectangle
+            if (-not $rect.IsEmpty) { return $script:surface }
+        } catch {}
+        $script:surface = $null
+    }
+    $page = $AE::FromHandle($script:hwnd).FindFirst([System.Windows.Automation.TreeScope]::Descendants, $pageCondition)
+    if (-not $page) { return $null }
+    $condition = [System.Windows.Automation.AndCondition]::new(
+        [System.Windows.Automation.PropertyCondition]::new($AE::ControlTypeProperty, $CT::Edit),
+        [System.Windows.Automation.PropertyCondition]::new($AE::IsKeyboardFocusableProperty, $true)
+    )
+    $area = [double]$bounds.Width * $bounds.Height
+    $best = $null
+    $bestArea = $area * 0.4
+    foreach ($element in $page.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)) {
+        $rect = $element.Current.BoundingRectangle
+        if ($rect.IsEmpty) { continue }
+        $size = $rect.Width * $rect.Height
+        if ($size -ge $bestArea) { $best = $element; $bestArea = $size }
+    }
+    $script:surface = $best
+    return $best
+}
+
+function Set-SurfaceFocus([string]$Reason) {
+    $surface = Get-Surface
+    if (-not $surface) { return $false }
+    try {
+        $surface.SetFocus()
+        Write-Log "Keyboard focus on the remote screen ($Reason)."
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+# A tapped tab, the page itself, or a control of the closed side panel can keep focus and swallow keys.
+function Update-SurfaceFocus {
+    if (-not $script:fullDone -or $script:panelOpen -or -not [RemoteWin]::IsForeground($script:hwnd)) { return }
+    if (((Get-Date) - $script:lastSurfaceFocus).TotalMilliseconds -lt 1000) { return }
+    $focused = Get-FocusedElement
+    if (-not $focused) { return }
+    try {
+        $current = $focused.Current
+        if ($current.ProcessId -ne [RemoteWin]::ProcessOf($script:hwnd)) { return }
+        $type = $current.ControlType
+        if ($type -eq $CT::Edit) { return }
+        $stuck = $type -eq $CT::TabItem -or $type -eq $CT::Document -or $current.IsOffscreen -or $current.BoundingRectangle.IsEmpty
+        if (-not $stuck) { return }
+        $label = Get-ElementLabel $focused
+    } catch {
+        return
+    }
+    $script:lastSurfaceFocus = Get-Date
+    [void](Set-SurfaceFocus "was on $label")
+}
+
+function Switch-TouchKeyboard {
+    [RemoteWin]::Focus($script:hwnd)
+    [void](Set-SurfaceFocus "keyboard button")
+    if ([TouchKeyboard]::IsShowing()) {
+        [void][TouchKeyboard]::Toggle($script:hwnd)
+        $script:keyboardShown = $false
+        $keys.Invalidate()
+        Write-Log "Lowered the touch keyboard."
+        return
+    }
+    [TouchKeyboard]::StartHost()
+    $deadline = (Get-Date).AddSeconds(2)
+    while ((Get-Date) -lt $deadline -and -not [TouchKeyboard]::IsShowing()) {
+        if ([TouchKeyboard]::Toggle($script:hwnd)) {
+            Start-Sleep -Milliseconds 250
+        } else {
+            Start-Sleep -Milliseconds 150
+        }
+    }
+    $script:keyboardShown = [TouchKeyboard]::IsShowing()
+    $keys.Invalidate()
+    Write-Log $(if ($script:keyboardShown) { "Raised the touch keyboard." } else { "The touch keyboard did not open." })
+}
+
+function Hide-TouchKeyboard {
+    if (-not $script:keyboardShown) { return }
+    $script:keyboardShown = $false
+    try { if ([TouchKeyboard]::IsShowing()) { [void][TouchKeyboard]::Toggle($script:hwnd) } } catch {}
+}
+
+# The tab bar settles into its final color after full screen, so the keyboard button keeps matching the bar beside it.
+function Update-BarColor {
+    if (-not $script:ghost -or -not $keys.Visible) { return }
+    if (((Get-Date) - $script:lastBarSample).TotalMilliseconds -lt 2000) { return }
+    $script:lastBarSample = Get-Date
+    $color = Get-ScreenColor ($keys.Left - 6) ([int]($keys.Top + $keys.Height / 2))
+    if ($color.ToArgb() -eq $script:barColor.ToArgb()) { return }
+    $script:barColor = $color
+    $form.Invalidate()
+    $keys.Invalidate()
+}
+
+function Update-KeyboardState {
+    if (-not $script:keyboardShown) { return }
+    if ([TouchKeyboard]::IsShowing()) { return }
+    $script:keyboardShown = $false
+    $keys.Invalidate()
+}
+
+function Write-SurfaceDump {
+    if ($script:surfaceLogged) { return }
+    $script:surfaceLogged = $true
+    $page = $AE::FromHandle($script:hwnd).FindFirst([System.Windows.Automation.TreeScope]::Descendants, $pageCondition)
+    if (-not $page) { return }
+    $area = [double]$bounds.Width * $bounds.Height
+    $count = 0
+    foreach ($element in $page.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) {
+        $current = $element.Current
+        $rect = $current.BoundingRectangle
+        if ($rect.IsEmpty -or ($rect.Width * $rect.Height) -lt ($area * 0.25)) { continue }
+        Write-Log ("Surface: {0} '{1}' class='{2}' id='{3}' at {4},{5} {6}x{7} focusable={8}" -f ($current.ControlType.ProgrammaticName -replace '^ControlType\.', ''), $current.Name, $current.ClassName, $current.AutomationId, [int]$rect.Left, [int]$rect.Top, [int]$rect.Width, [int]$rect.Height, $current.IsKeyboardFocusable)
+        if (++$count -ge 25) { break }
+    }
+}
+
 function Update-SessionControls {
     $rows = @(Get-SessionControls)
     $names = ($rows | ForEach-Object { "$($_.Type) '$($_.Name)'" }) -join "; "
@@ -540,6 +851,20 @@ function Update-SessionControls {
         Write-Log "Controls: $names"
     }
     $script:disconnect = $rows | Where-Object { $_.Name -match '^\s*disconnect' } | Select-Object -First 1
+    $script:panelOpen = @($rows | Where-Object { $_.Name -match 'Pin options panel' }).Count -gt 0
+    if (-not $script:optionsLogged) {
+        $checks = @($rows | Where-Object { $_.Type -eq 'CheckBox' -and $_.Name -match 'on-screen input|send system keys|relative mouse|tabbed' })
+        if ($checks.Count -gt 0) {
+            $script:optionsLogged = $true
+            $states = foreach ($check in $checks) {
+                $pattern = $null
+                $state = "?"
+                try { if ($check.Element.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pattern)) { $state = $pattern.Current.ToggleState } } catch {}
+                "$($check.Name.Trim())=$state"
+            }
+            Write-Log "Options: $($states -join ', ')"
+        }
+    }
 
     $settling = $script:foundAt -and ((Get-Date) - $script:foundAt).TotalSeconds -lt 90
     Update-FullScreen $rows
@@ -567,6 +892,7 @@ function Update-SessionControls {
             $side = [Math]::Max([Math]::Max($rect.Width, $rect.Height) + 8, 40)
             try { $script:barColor = Get-ScreenColor ([int]($rect.Left + $rect.Width / 2 - $side / 2 - 4)) ([int]($rect.Top + $rect.Height / 2)) } catch {}
             $form.Invalidate()
+            $keys.Invalidate()
             Write-Log "Bar X: '$($closers[0].Name)' at $([int]$rect.Left),$([int]$rect.Top) $([int]$rect.Width)x$([int]$rect.Height)"
         }
     }
@@ -706,6 +1032,11 @@ function Update-CloseButton {
         $form.Bounds = New-Object System.Drawing.Rectangle $x, $y, $w, $h
         $form.Invalidate()
     }
+    $keysX = $x - $w - $(if ($script:ghost) { 0 } else { 8 })
+    if ($keys.Left -ne $keysX -or $keys.Top -ne $y -or $keys.Width -ne $w -or $keys.Height -ne $h) {
+        $keys.Bounds = New-Object System.Drawing.Rectangle $keysX, $y, $w, $h
+        $keys.Invalidate()
+    }
     if ($script:ghost) {
         if ($fade.Enabled) { $fade.Stop() }
         if ($form.Opacity -ne $ghostOpacity) { $form.Opacity = $ghostOpacity }
@@ -727,8 +1058,10 @@ function Read-Request {
         [RemoteWin]::Focus($script:hwnd)
         return
     }
+    Hide-TouchKeyboard
     if ($script:hwnd -ne [IntPtr]::Zero) { [RemoteWin]::Close($script:hwnd) }
     $form.Hide()
+    $keys.Hide()
     [RemoteWin]::UnlockFullscreenKeys()
     try { if ($lock.Visible) { $lock.Hide() } } catch {}
     $script:Name = $parts[0].Trim()
@@ -761,11 +1094,14 @@ function Stop-Host {
     $script:leaving = $true
     $timer.Stop()
     $fade.Stop()
+    Hide-TouchKeyboard
     [RemoteWin]::UnlockFullscreenKeys()
     try { if ($lock.Visible) { $lock.Hide() } } catch {}
+    try { if ($keys.Visible) { $keys.Hide() } } catch {}
     Show-Console
     try { $form.Close() } catch {}
     try { $lock.Close() } catch {}
+    try { $keys.Close() } catch {}
     $context.ExitThread()
 }
 
@@ -775,6 +1111,7 @@ function Stop-Session {
     $timer.Stop()
     Write-Log "Disconnecting $($script:Name)"
     $form.Hide()
+    $keys.Hide()
     if ($script:disconnect) {
         try {
             $pattern = $null
@@ -795,7 +1132,7 @@ function Stop-Session {
 
 $context = New-Object System.Windows.Forms.ApplicationContext
 
-$form = New-Object System.Windows.Forms.Form
+$form = New-Object GhostForm
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $form.ShowInTaskbar = $false
 $form.TopMost = $true
@@ -805,7 +1142,6 @@ $form.BackColor = $barBlack
 $form.Opacity = 0
 $form.Bounds = New-Object System.Drawing.Rectangle ($bounds.Right - 48), $bounds.Top, 48, 48
 $form.Cursor = [System.Windows.Forms.Cursors]::Hand
-$form.Add_HandleCreated({ [RemoteWin]::NoActivate($form.Handle) })
 $form.Add_Paint({
     param($sender, $e)
     $g = $e.Graphics
@@ -828,7 +1164,47 @@ $form.Add_MouseLeave({ $script:hot = $false; $form.Invalidate() })
 $form.Add_MouseDown({ $script:hot = $true; $form.Invalidate() })
 $form.Add_Click({ Stop-Session })
 
-$lock = New-Object System.Windows.Forms.Form
+$keys = New-Object GhostForm
+$keys.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+$keys.ShowInTaskbar = $false
+$keys.TopMost = $true
+$keys.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+$keys.Text = "Touch keyboard"
+$keys.BackColor = $barBlack
+$keys.Bounds = New-Object System.Drawing.Rectangle ($bounds.Right - 96), $bounds.Top, 48, 48
+$keys.Cursor = [System.Windows.Forms.Cursors]::Hand
+$keys.Add_Paint({
+    param($sender, $e)
+    $g = $e.Graphics
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.Clear($(if ($script:keyboardShown) { $keysOn } elseif ($script:keysHot) { $keysHover } else { $script:barColor }))
+    $side = [double][Math]::Min($keys.ClientSize.Width, $keys.ClientSize.Height)
+    $kw = $side * 0.56
+    $kh = $kw * 0.62
+    $left = ($keys.ClientSize.Width - $kw) / 2
+    $top = ($keys.ClientSize.Height - $kh) / 2
+    $stroke = [float][Math]::Max(1.5, $side / 26.0)
+    $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::White), $stroke
+    $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
+    try {
+        $g.DrawRectangle($pen, [float]$left, [float]$top, [float]$kw, [float]$kh)
+        $key = $kw / 11
+        foreach ($row in 0, 1) {
+            for ($col = 0; $col -lt 5; $col++) {
+                $g.FillRectangle($brush, [float]($left + $key * (1 + $col * 2)), [float]($top + $kh * (0.2 + $row * 0.24)), [float]$key, [float]$key)
+            }
+        }
+        $g.FillRectangle($brush, [float]($left + $key * 3), [float]($top + $kh * 0.7), [float]($key * 5), [float]$key)
+    } finally {
+        $pen.Dispose()
+        $brush.Dispose()
+    }
+})
+$keys.Add_MouseEnter({ $script:keysHot = $true; $keys.Invalidate() })
+$keys.Add_MouseLeave({ $script:keysHot = $false; $keys.Invalidate() })
+$keys.Add_Click({ try { Switch-TouchKeyboard } catch { Write-Log "Keyboard: $($_.Exception.Message)" } })
+
+$lock = New-Object GhostForm
 $lock.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $lock.ShowInTaskbar = $false
 $lock.TopMost = $true
@@ -836,7 +1212,6 @@ $lock.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
 $lock.Text = "Keep full screen"
 $lock.Opacity = $ghostOpacity
 $lock.BackColor = $barBlack
-$lock.Add_HandleCreated({ [RemoteWin]::NoActivate($lock.Handle) })
 
 $fade = New-Object System.Windows.Forms.Timer
 $fade.Interval = 16
@@ -880,12 +1255,20 @@ $timer.Add_Tick({
         if (((Get-Date) - $script:lastScan).TotalMilliseconds -ge $scanMs) {
             $script:lastScan = Get-Date
             try { Update-SessionControls } catch { Write-Log "Scan: $($_.Exception.Message)" }
+            try { Update-SurfaceFocus } catch {}
+            try { Update-KeyboardState } catch {}
+            try { Update-BarColor } catch {}
+            try { Update-InputLog } catch {}
+            if ($script:fullDone -and -not $script:surfaceLogged) {
+                try { Write-SurfaceDump } catch { Write-Log "Surface: $($_.Exception.Message)" }
+            }
         }
 
         Update-CloseButton
         if (-not $form.Visible) {
             $form.Opacity = $(if ($script:ghost) { $ghostOpacity } else { 0 })
             $form.Show()
+            $keys.Show()
             [RemoteWin]::Focus($script:hwnd)
             if (-not $script:ghost) { $fade.Start() }
         }

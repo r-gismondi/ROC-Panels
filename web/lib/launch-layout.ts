@@ -125,8 +125,7 @@ function fileHash(file: string) {
 function watcherIdentity() {
   const launch = fileHash(path.join(scriptsDir(), "Watch-Launch.ps1"))
   const start = fileHash(path.join(scriptsDir(), "Start-Watch.bat"))
-  const keyboard = fileHash(path.join(scriptsDir(), "Watch-Keyboard.ps1"))
-  return `${launch} ${start} ${keyboard}`
+  return `${launch} ${start}`
 }
 
 function watcherIsCurrent(host: string) {
@@ -167,7 +166,7 @@ function publishLayoutScript(host: string, computer: string) {
 function publishWatcher(host: string) {
   const root = layoutsRoot(host)
   fs.mkdirSync(root, { recursive: true })
-  for (const name of ["Watch-Launch.ps1", "Start-Watch.bat", "Launch-InSession.ps1", "Capture-Thumbs.ps1", "Start-Thumbs.bat", "Watch-Keyboard.ps1"]) {
+  for (const name of ["Watch-Launch.ps1", "Start-Watch.bat", "Launch-InSession.ps1", "Capture-Thumbs.ps1", "Start-Thumbs.bat"]) {
     fs.copyFileSync(path.join(scriptsDir(), name), path.join(root, name))
   }
 }

@@ -18,27 +18,17 @@ $stamp = Join-Path $root "watcher-script.txt"
 try {
     $launchHash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLower()
     $startHash = (Get-FileHash -LiteralPath (Join-Path $root "Start-Watch.bat") -Algorithm SHA256).Hash.ToLower()
-    $keyboardHash = (Get-FileHash -LiteralPath (Join-Path $root "Watch-Keyboard.ps1") -Algorithm SHA256).Hash.ToLower()
-    Set-Content -LiteralPath $stamp -Value "$launchHash $startHash $keyboardHash" -Encoding Ascii
+    Set-Content -LiteralPath $stamp -Value "$launchHash $startHash" -Encoding Ascii
 } catch {}
 
-$keyboard = Join-Path $root "Watch-Keyboard.ps1"
-$keyboardAlive = Join-Path $root "keyboard-alive.txt"
-$script:lastKeyboardCheck = [datetime]::MinValue
-function Start-KeyboardWatch {
-    $now = Get-Date
-    if (($now - $script:lastKeyboardCheck).TotalSeconds -lt 5) { return }
-    $script:lastKeyboardCheck = $now
-    if (-not (Test-Path -LiteralPath $keyboard)) { return }
-    if (Test-Path -LiteralPath $keyboardAlive) {
-        try {
-            $text = (Get-Content -LiteralPath $keyboardAlive -Raw -ErrorAction Stop).Trim()
-            $beat = [datetimeoffset]::Parse($text)
-            if (([datetimeoffset]::Now - $beat).TotalSeconds -lt 5) { return }
-        } catch {}
-    }
-    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile", "-MTA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", $keyboard -WindowStyle Hidden
-}
+# The touch keyboard for remote sessions opens on the pedestal, so a copy of the old panel-side
+# keyboard watcher must not keep raising this computer's keyboard.
+try {
+    Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop |
+        Where-Object { $_.CommandLine -like "*Watch-Keyboard.ps1*" } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+} catch {}
+Remove-Item -LiteralPath (Join-Path $root "Watch-Keyboard.ps1"), (Join-Path $root "keyboard-alive.txt") -Force -ErrorAction SilentlyContinue
 
 $thumbs = Join-Path $root "Capture-Thumbs.ps1"
 $thumbAlive = Join-Path $root "thumbs\alive.txt"
@@ -68,11 +58,9 @@ function Update-Beat {
 }
 
 Start-ThumbCapture
-Start-KeyboardWatch
 while ($true) {
     Update-Beat
     Start-ThumbCapture
-    Start-KeyboardWatch
     $items = @(Get-ChildItem -LiteralPath $queue -Filter *.txt -ErrorAction SilentlyContinue | Sort-Object Name)
     foreach ($item in $items) {
         $bat = ""
