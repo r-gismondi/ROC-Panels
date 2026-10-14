@@ -1,16 +1,14 @@
 "use client"
 
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react"
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react"
 import { DragCoach } from "@/components/drag-coach"
+import { PresetCoach } from "@/components/preset-coach"
 import { Reveal, StatusLine, motionStyle, usePresence } from "@/components/presence"
 import { Slider } from "@/components/ui/slider"
 import { C_CONNECT_ID, C_CONNECT_NAME, C_CONNECT_URL, programIconClass, programIconSrc } from "@/lib/c-connect"
+import { GROUP_COLOR, presetZones, type Preset, type Screen } from "@/lib/preset-zones"
 
 type PanelId = 1 | 2
-
-type Screen = { id: string; hdmi: string }
-
-type Preset = { id: string; name: string; groups: Record<string, number> }
 
 type PinnedApp = { id: string; name: string; path: string; locked?: boolean }
 
@@ -35,8 +33,6 @@ const REMOTE_PANEL: Record<Computer, string> = {
 }
 
 type Selection = { panel: PanelId; screen: string | "all" }
-
-const GROUP_COLOR = ["#3ec8ff", "#d56bff", "#7eb6ff", "#5eead4", "#f0c27a"]
 
 const PANEL_1: Screen[][] = [
   [
@@ -164,7 +160,6 @@ function savedPreset(id: string | undefined, allowed: string[]) {
   if (!id || id === "close" || !allowed.includes(id)) return ""
   return id
 }
-
 export function WallConsole() {
   const [selection, setSelection] = useState<Selection>({ panel: 1, screen: "all" })
   const [preset, setPreset] = useState<Record<PanelId, string>>({ 1: "", 2: "" })
@@ -193,11 +188,35 @@ export function WallConsole() {
   const [drag, setDrag] = useState<{ id: string; x: number; y: number; over: string } | null>(null)
   const armedRef = useRef("")
   const launchPin = useRef("")
+  const scrollArea = useRef<HTMLDivElement>(null)
+  const presetCoachHold = useRef<{ rows: Screen[][]; preset: Preset } | null>(null)
 
   useEffect(() => {
     if (!SCREENS.some((screen) => screen.id === selection.screen)) setKeyboardOpen(false)
     else setReplaceAddress(true)
   }, [selection])
+
+  useEffect(() => {
+    const events = new EventSource("/api/home")
+    events.onmessage = (event) => {
+      if (event.data !== "home") return
+      setKeyboardOpen(false)
+      setRemoteAsk("")
+      scrollArea.current?.scrollTo({ top: 0, behavior: "smooth" })
+    }
+    return () => events.close()
+  }, [])
+
+  useEffect(() => {
+    if (!keyboardOpen) return
+    function closeKeyboard(event: PointerEvent) {
+      const target = event.target
+      if (target instanceof Element && (target.closest("[data-keyboard]") || target.closest("[data-typeable]"))) return
+      setKeyboardOpen(false)
+    }
+    window.addEventListener("pointerdown", closeKeyboard, true)
+    return () => window.removeEventListener("pointerdown", closeKeyboard, true)
+  }, [keyboardOpen])
 
   useEffect(() => {
     if (!armedApp) return
@@ -336,6 +355,9 @@ export function WallConsole() {
     : Math.round(brightnessValues.reduce((sum, value) => sum + value, 0) / brightnessValues.length)
   const computer2Preset = presetById(PRESETS[2], preset[2], "focus")
   const activeComputer3Preset = presetById(COMPUTER_3_PRESETS, computer3Preset, "independent")
+  const pending1 = preset[1] !== "" && preset[1] !== applied[1]
+  const pending2 = preset[2] !== "" && preset[2] !== applied[2]
+  const pending3 = computer3Preset !== "" && computer3Preset !== computer3Applied
   const current = SCREENS.find((screen) => screen.id === selection.screen)
   if (current) screenHold.current = current
   const addressPresence = usePresence(Boolean(current))
@@ -456,7 +478,15 @@ export function WallConsole() {
 
   const footer =
     panel === 1
-      ? { label: "PANEL 1 PRESETS", presets: PRESETS[1], activeId: preset[1], appliedId: applied[1], computer: "101" as const, target: GROUP_LABEL["101"] }
+      ? {
+          label: "PANEL 1 PRESETS",
+          presets: PRESETS[1],
+          activeId: preset[1],
+          appliedId: applied[1],
+          computer: "101" as const,
+          target: GROUP_LABEL["101"],
+          rows: PANEL_1,
+        }
       : computer3Scope
         ? {
             label: "SCREENS 13 AND 18",
@@ -465,8 +495,17 @@ export function WallConsole() {
             appliedId: computer3Applied,
             computer: "103" as const,
             target: GROUP_LABEL["103"],
+            rows: COMPUTER_3,
           }
-        : { label: "SCREENS 9–12, 14–17", presets: PRESETS[2], activeId: preset[2], appliedId: applied[2], computer: "102" as const, target: GROUP_LABEL["102"] }
+        : {
+            label: "SCREENS 9–12, 14–17",
+            presets: PRESETS[2],
+            activeId: preset[2],
+            appliedId: applied[2],
+            computer: "102" as const,
+            target: GROUP_LABEL["102"],
+            rows: COMPUTER_2,
+          }
 
   async function runLayout(computer: "101" | "102" | "103", id: string) {
     if (layoutBusy.current) return false
@@ -884,6 +923,10 @@ export function WallConsole() {
   if (armedPin) coachHold.current = armedPin
   const coachPin = armedPin ?? coachHold.current
   const coachPresence = usePresence(Boolean(armedPin) && !drag)
+  const shownPreset = footer.presets.find((item) => item.id === footer.activeId)
+  if (previewPending && shownPreset) presetCoachHold.current = { rows: footer.rows, preset: shownPreset }
+  const presetCoach = presetCoachHold.current
+  const presetCoachPresence = usePresence(previewPending && Boolean(shownPreset))
 
   return (
     <main className="flex h-svh flex-col overflow-hidden bg-[radial-gradient(circle_at_top,#1650c8_0%,#06215f_42%,#03102e_100%)] text-white">
@@ -915,7 +958,7 @@ export function WallConsole() {
           </div>
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
+      <div ref={scrollArea} className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto pb-24">
       <section className="flex flex-col gap-3 px-4 py-3 lg:px-6">
         <div className="rounded-2xl border border-cyan-300/40 bg-[#0a2f86]/55 p-3 shadow-[0_0_28px_rgba(40,140,255,0.25)]">
           <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
@@ -987,6 +1030,7 @@ export function WallConsole() {
                     <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">ADDRESS</p>
                     <button
                       type="button"
+                      data-typeable
                       onClick={() => {
                         setKeyboardOpen(true)
                         setReplaceAddress(true)
@@ -1018,6 +1062,7 @@ export function WallConsole() {
           detail="Screens 1–8"
           rows={PANEL_1}
           preset={presetById(PRESETS[1], preset[1], "focus")}
+          pending={pending1}
           selection={selection}
           power={power}
           thumbStamp={thumbStamp}
@@ -1043,9 +1088,12 @@ export function WallConsole() {
               <h2 className="text-sm font-semibold tracking-[0.16em] uppercase">Panel 2</h2>
               <p className="text-xs text-cyan-100/70">Screens 9–18</p>
             </div>
-            <span className="text-[11px] tracking-[0.14em] text-cyan-100/80">
-              {IDS[2].every((id) => power[id]) ? "ON" : IDS[2].every((id) => !power[id]) ? "OFF" : "MIXED"}
-            </span>
+            <div className="flex items-center gap-2">
+              <PreviewChip show={pending2 || pending3} />
+              <span className="text-[11px] tracking-[0.14em] text-cyan-100/80">
+                {IDS[2].every((id) => power[id]) ? "ON" : IDS[2].every((id) => !power[id]) ? "OFF" : "MIXED"}
+              </span>
+            </div>
           </div>
           <div
             className="flex w-full items-stretch justify-center gap-2 [container-type:inline-size]"
@@ -1056,6 +1104,7 @@ export function WallConsole() {
               style={{ width: "calc(4 * var(--tile) + 3 * var(--seam) + 2 * var(--pad))" }}
               rows={COMPUTER_2}
               preset={computer2Preset}
+              pending={pending2}
               selected={computer2Scope}
               selection={selection}
               power={power}
@@ -1072,6 +1121,7 @@ export function WallConsole() {
               style={{ width: "calc(var(--tile) + 2 * var(--pad))" }}
               rows={COMPUTER_3}
               preset={activeComputer3Preset}
+              pending={pending3}
               selected={computer3Scope}
               selection={selection}
               power={power}
@@ -1089,8 +1139,11 @@ export function WallConsole() {
       </section>
 
       <footer className="shrink-0 border-t border-cyan-300/30 px-4 py-3 sm:px-6">
+        <div className="flex min-w-0 flex-col gap-4 overflow-hidden lg:flex-row lg:items-stretch">
+        <div className="min-w-0 flex-1">
         <PresetRow
           label={footer.label}
+          rows={footer.rows}
           presets={footer.presets}
           activeId={footer.activeId}
           pending={previewPending}
@@ -1127,6 +1180,20 @@ export function WallConsole() {
             void closeAllEdge()
           }}
         />
+        </div>
+        {presetCoachPresence.mounted && presetCoach ? (
+          <div className={`relative shrink-0 overflow-hidden ${presetCoachPresence.visible ? "h-56 w-full lg:w-[34rem]" : "h-0 w-0"}`}>
+            <div className="absolute inset-0 overflow-hidden">
+              <div
+                className={`h-full ${presetCoachPresence.visible ? "translate-y-0 scale-100 opacity-100" : "translate-y-4 scale-95 opacity-0"}`}
+                style={motionStyle}
+              >
+                <PresetCoach key={`${presetCoach.preset.id}-${presetCoach.rows.length}`} rows={presetCoach.rows} preset={presetCoach.preset} />
+              </div>
+            </div>
+          </div>
+        ) : null}
+        </div>
       </footer>
       <section className="shrink-0 border-t border-cyan-300/30 px-4 py-3 sm:px-6">
         <div className="flex min-w-0 flex-col gap-4 overflow-hidden lg:flex-row lg:items-stretch">
@@ -1278,6 +1345,7 @@ function PanelFrame({
   detail,
   rows,
   preset,
+  pending,
   selection,
   power,
   thumbStamp,
@@ -1292,6 +1360,7 @@ function PanelFrame({
   detail: string
   rows: Screen[][]
   preset: Preset
+  pending: boolean
   selection: Selection
   power: Record<string, boolean>
   thumbStamp: number
@@ -1318,11 +1387,15 @@ function PanelFrame({
           <h2 className="text-sm font-semibold tracking-[0.16em] uppercase">{title}</h2>
           <p className="text-xs text-cyan-100/70">{detail}</p>
         </div>
-        <span className="text-[11px] tracking-[0.14em] text-cyan-100/80">{allOn ? "ON" : allOff ? "OFF" : "MIXED"}</span>
+        <div className="flex items-center gap-2">
+          <PreviewChip show={pending} />
+          <span className="text-[11px] tracking-[0.14em] text-cyan-100/80">{allOn ? "ON" : allOff ? "OFF" : "MIXED"}</span>
+        </div>
       </div>
       <ScreenWall
         rows={rows}
         preset={preset}
+        pending={pending}
         selection={selection}
         power={power}
         thumbStamp={thumbStamp}
@@ -1341,6 +1414,7 @@ function ComputerFrame({
   style,
   rows,
   preset,
+  pending,
   selected,
   selection,
   power,
@@ -1356,6 +1430,7 @@ function ComputerFrame({
   style?: CSSProperties
   rows: Screen[][]
   preset: Preset
+  pending: boolean
   selected: boolean
   selection: Selection
   power: Record<string, boolean>
@@ -1379,6 +1454,7 @@ function ComputerFrame({
       <ScreenWall
         rows={rows}
         preset={preset}
+        pending={pending}
         selection={selection}
         power={power}
         thumbStamp={thumbStamp}
@@ -1395,6 +1471,7 @@ function ComputerFrame({
 function ScreenWall({
   rows,
   preset,
+  pending,
   selection,
   power,
   thumbStamp,
@@ -1406,6 +1483,7 @@ function ScreenWall({
 }: {
   rows: Screen[][]
   preset: Preset
+  pending: boolean
   selection: Selection
   power: Record<string, boolean>
   thumbStamp: number
@@ -1417,6 +1495,8 @@ function ScreenWall({
 }) {
   const columns = rows.reduce((count, row) => Math.max(count, row.length), 1)
   const rowCount = rows.length
+  const zones = presetZones(rows, preset)
+  const entrance = "zone-in 560ms cubic-bezier(0.22, 1, 0.36, 1) both"
   return (
     <div
       className="relative grid w-full gap-1 p-5"
@@ -1425,22 +1505,59 @@ function ScreenWall({
         gridTemplateRows: `repeat(${rowCount}, auto)`,
       }}
     >
-      {rows.flat().map((screen, index) => (
-        <ScreenButton
-          key={screen.id}
-          screen={screen}
-          preset={preset}
-          selected={selection.screen === screen.id}
-          on={power[screen.id]}
-          thumbStamp={thumbStamp}
-          labelTop={columns === 1 && index === rowCount / 2 - 1}
-          onSelect={() => onSelect(screen.id)}
-          onPress={onPress}
-          dropTarget={dropTarget}
-        />
+      {rows.map((row, r) =>
+        row.map((screen, c) => (
+          <div key={screen.id} className="min-w-0" style={{ gridRow: r + 1, gridColumn: c + 1 }}>
+            <ScreenButton
+              screen={screen}
+              preset={preset}
+              selected={selection.screen === screen.id}
+              on={power[screen.id]}
+              thumbStamp={thumbStamp}
+              labelTop={columns === 1 && r === rowCount / 2 - 1}
+              onSelect={() => onSelect(screen.id)}
+              onPress={onPress}
+              dropTarget={dropTarget}
+            />
+          </div>
+        )),
+      )}
+      {zones.map((zone, index) => (
+        <div
+          key={zone.key}
+          aria-hidden="true"
+          className="pointer-events-none relative z-[15] -m-[3px] rounded-md border-[3px]"
+          style={{
+            gridRow: `${zone.row} / span ${zone.rows}`,
+            gridColumn: `${zone.col} / span ${zone.cols}`,
+            borderColor: zone.color,
+            borderStyle: pending ? "dashed" : "solid",
+            ["--zone" as string]: zone.color,
+            animation: pending ? `${entrance}, zone-wait 1.6s ease-in-out 560ms infinite` : entrance,
+          }}
+        >
+          <span
+            className="absolute -top-2.5 -left-2.5 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[11px] font-semibold leading-none text-[#03102e] shadow-[0_0_8px_rgba(0,0,0,0.5)]"
+            style={{ background: zone.color }}
+          >
+            {index + 1}
+          </span>
+        </div>
       ))}
       <RemoteButton label={remoteLabel} onClick={onOpenRemote} />
     </div>
+  )
+}
+
+function PreviewChip({ show }: { show: boolean }) {
+  if (!show) return null
+  return (
+    <span
+      className="rounded-full border border-white bg-white/15 px-2 py-0.5 text-[11px] font-semibold tracking-[0.18em] text-white"
+      style={{ animation: "chip-wait 1.6s ease-in-out infinite" }}
+    >
+      PREVIEW
+    </span>
   )
 }
 
@@ -1561,8 +1678,37 @@ function ScreenButton({
   )
 }
 
+function PresetGlyph({ rows, preset }: { rows: Screen[][]; preset: Preset }) {
+  const columns = rows.reduce((count, row) => Math.max(count, row.length), 1)
+  return (
+    <span
+      aria-hidden="true"
+      className="grid h-7 gap-[2px]"
+      style={{
+        width: `${columns * 0.875 + 0.25}rem`,
+        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+        gridTemplateRows: `repeat(${rows.length}, minmax(0, 1fr))`,
+      }}
+    >
+      {presetZones(rows, preset).map((zone) => (
+        <span
+          key={zone.key}
+          className="rounded-[2px] border"
+          style={{
+            gridRow: `${zone.row} / span ${zone.rows}`,
+            gridColumn: `${zone.col} / span ${zone.cols}`,
+            borderColor: zone.color,
+            background: `${zone.color}66`,
+          }}
+        />
+      ))}
+    </span>
+  )
+}
+
 function PresetRow({
   label,
+  rows,
   presets,
   activeId,
   pending,
@@ -1573,6 +1719,7 @@ function PresetRow({
   onCloseAll,
 }: {
   label: string
+  rows: Screen[][]
   presets: Preset[]
   activeId: string
   pending: boolean
@@ -1601,7 +1748,10 @@ function PresetRow({
       <div className={`grid grid-cols-2 gap-2 ${presets.length > 2 ? "sm:grid-cols-5" : "sm:grid-cols-2 sm:max-w-md"}`}>
         {presets.map((item) => (
           <GlowButton key={item.id} active={activeId !== "" && item.id === activeId} onClick={() => onSelect(item.id)}>
-            {item.name}
+            <span className="flex flex-col items-center gap-1.5 py-2">
+              <PresetGlyph rows={rows} preset={item} />
+              <span>{item.name}</span>
+            </span>
           </GlowButton>
         ))}
       </div>
@@ -1653,7 +1803,11 @@ function AddressKeyboard({
 }) {
   const shortcuts = ["https://", "www.", "/", ":", ".com", "?", "&", "=", "#", "%"]
   return (
-    <div className={`fixed inset-x-0 bottom-0 z-40 max-h-[70vh] overflow-y-auto border-t border-cyan-300/40 bg-[#03102e]/95 p-3 shadow-[0_-12px_40px_rgba(0,0,0,0.45)] select-none ${motionClass}`} style={motionStyle}>
+    <div
+      data-keyboard
+      className={`fixed inset-x-0 bottom-0 z-40 max-h-[70vh] overflow-y-auto border-t border-cyan-300/40 bg-[#03102e]/95 px-24 py-3 shadow-[0_-12px_40px_rgba(0,0,0,0.45)] select-none ${motionClass}`}
+      style={motionStyle}
+    >
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-2">
         <div className="flex items-baseline justify-between gap-3">
           <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{label}</p>
@@ -1716,7 +1870,7 @@ function GlowButton({
   onClick,
   tone = "normal",
 }: {
-  children: string
+  children: ReactNode
   active?: boolean
   onClick: () => void
   tone?: "normal" | "alert"

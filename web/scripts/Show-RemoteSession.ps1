@@ -13,6 +13,7 @@ if ($Url -notmatch $sessionPattern) { exit 1 }
 
 New-Item -ItemType Directory -Force -Path "C:\layouts" | Out-Null
 $requestPath = "C:\layouts\remote-session.request"
+$homePath = "C:\layouts\remote-session.home"
 $logPath = "C:\layouts\remote-session.log"
 
 $mutex = New-Object System.Threading.Mutex($false, "WallRemoteSession")
@@ -34,6 +35,7 @@ function Write-Log([string]$Text) {
 try {
 try { Set-Content -LiteralPath $logPath -Value "" -Encoding utf8 } catch {}
 if (Test-Path -LiteralPath $requestPath) { Remove-Item -LiteralPath $requestPath -Force -ErrorAction SilentlyContinue }
+if (Test-Path -LiteralPath $homePath) { Remove-Item -LiteralPath $homePath -Force -ErrorAction SilentlyContinue }
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -276,6 +278,13 @@ public static class RemoteWin {
         _hook = IntPtr.Zero;
     }
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string className, string title);
+
+    public static IntPtr HomeWindow() {
+        IntPtr hwnd = FindWindow(null, "ROC Home");
+        return hwnd != IntPtr.Zero && IsWindowVisible(hwnd) ? hwnd : IntPtr.Zero;
+    }
+
     public static void KeepBelow(IntPtr hwnd, IntPtr above) {
         if (hwnd == IntPtr.Zero || !IsWindow(hwnd) || above == IntPtr.Zero || !IsWindow(above)) return;
         SetWindowPos(hwnd, above, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -370,13 +379,24 @@ function Get-ConsoleWindow {
 }
 
 # The session is slid in just under the X; raising it over the X even briefly makes the X flicker.
+# The console's Home button is slid in the same way, between the X and the session.
 function Set-SessionOrder {
+    $homeButton = [RemoteWin]::HomeWindow()
     if (-not $form.Visible) {
-        [RemoteWin]::KeepOnTop($script:hwnd)
+        if ($homeButton -eq [IntPtr]::Zero) {
+            [RemoteWin]::KeepOnTop($script:hwnd)
+        } else {
+            [RemoteWin]::KeepOnTop($homeButton)
+            [RemoteWin]::KeepBelow($script:hwnd, $homeButton)
+        }
         return
     }
     [RemoteWin]::KeepOnTop($form.Handle)
     $under = $form.Handle
+    if ($homeButton -ne [IntPtr]::Zero) {
+        [RemoteWin]::KeepBelow($homeButton, $under)
+        $under = $homeButton
+    }
     if ($lock.Visible) {
         [RemoteWin]::KeepBelow($lock.Handle, $under)
         $under = $lock.Handle
@@ -716,6 +736,13 @@ function Read-Request {
     Start-Session
 }
 
+function Test-HomeRequest {
+    if (-not (Test-Path -LiteralPath $homePath)) { return $false }
+    Remove-Item -LiteralPath $homePath -Force -ErrorAction SilentlyContinue
+    Write-Log "Home was tapped."
+    return $true
+}
+
 function Show-Console {
     $console = Get-ConsoleWindow
     if ($console -eq [IntPtr]::Zero) { return }
@@ -823,6 +850,10 @@ $timer.Interval = 250
 $timer.Add_Tick({
     if ($script:leaving) { return }
     try {
+        if (Test-HomeRequest) {
+            Stop-Session
+            return
+        }
         Read-Request
         if ($script:hwnd -eq [IntPtr]::Zero) {
             $found = Find-SessionWindow
@@ -872,6 +903,7 @@ $timer.Start()
     throw
 } finally {
     if (Test-Path -LiteralPath $requestPath) { Remove-Item -LiteralPath $requestPath -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $homePath) { Remove-Item -LiteralPath $homePath -Force -ErrorAction SilentlyContinue }
     if ($ownsMutex) {
         try { $mutex.ReleaseMutex() | Out-Null } catch {}
         $mutex.Dispose()

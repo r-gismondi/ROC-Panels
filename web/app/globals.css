@@ -128,3 +128,41 @@
     @apply font-sans;
   }
 }
+
+@keyframes zone-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.94);
+    box-shadow: 0 0 0 transparent;
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1.015);
+    box-shadow: 0 0 30px var(--zone);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 14px var(--zone);
+  }
+}
+
+@keyframes zone-wait {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes chip-wait {
+  0%,
+  100% {
+    box-shadow: 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 14px rgba(255, 255, 255, 0.55);
+  }
+}
