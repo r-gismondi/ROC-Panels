@@ -549,6 +549,7 @@ $script:keyboardShown = $false
 $script:keyboardAuto = $false
 $script:keysHot = $false
 $script:fieldLast = $null
+$script:lastFieldAction = [datetime]::MinValue
 $script:lastBarSample = [datetime]::MinValue
 
 function Get-EdgeWindows {
@@ -670,6 +671,7 @@ function Start-Session {
     $script:panelOpen = $false
     $script:lastSurfaceFocus = [datetime]::MinValue
     $script:fieldLast = $null
+    $script:lastFieldAction = [datetime]::MinValue
     [RemoteField]::Watch($(if ($script:Computer) { "\\$($script:Computer)\c$\layouts\type-field.txt" } else { "" }))
     $start = New-Object System.Diagnostics.ProcessStartInfo
     $start.FileName = $edge
@@ -838,15 +840,16 @@ function Close-TouchKeyboard([string]$Reason) {
 }
 
 # A keyboard raised for a text field lowers again when that field loses focus; one opened with the button stays.
+# Focus raises the session over the X, keyboard and Home buttons until the next tick, so it is only used when the session is behind.
 function Open-TouchKeyboard([string]$Reason, [switch]$ForField) {
-    [RemoteWin]::Focus($script:hwnd)
-    [void](Set-SurfaceFocus $Reason)
     $script:keyboardAuto = [bool]$ForField
     if ([TouchKeyboard]::IsShowing()) {
         $script:keyboardShown = $true
         $keys.Invalidate()
         return
     }
+    if (-not [RemoteWin]::IsForeground($script:hwnd)) { [RemoteWin]::Focus($script:hwnd) }
+    [void](Set-SurfaceFocus $Reason)
     [TouchKeyboard]::StartHost()
     $deadline = (Get-Date).AddSeconds(2)
     while ((Get-Date) -lt $deadline -and -not [TouchKeyboard]::IsShowing()) {
@@ -881,11 +884,15 @@ function Update-RemoteField {
     }
     $state = [RemoteField]::State
     if ($state -eq $script:fieldLast) { return }
+    # A state that arrives this soon after the last raise or lower waits, so quick focus hops cannot toggle the keyboard back and forth.
+    if (((Get-Date) - $script:lastFieldAction).TotalMilliseconds -lt 1000) { return }
     $script:fieldLast = $state
     if ($state -like 'on *') {
         if (-not [RemoteWin]::IsForeground($script:hwnd)) { return }
+        $script:lastFieldAction = Get-Date
         Open-TouchKeyboard "text field" -ForField
     } elseif ($state -like 'off *' -and $script:keyboardAuto -and $script:keyboardShown) {
+        $script:lastFieldAction = Get-Date
         Close-TouchKeyboard "text field left"
     }
 }

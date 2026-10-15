@@ -86,6 +86,38 @@ public static class FieldFocus {
         return _typing;
     }
 
+    // A tap into a web field can raise no focus event at all, so the focused element is also read on a timer.
+    // Only a change between typing and not typing counts. While typing, the browser's bare window
+    // means its page tree is not ready yet, not that the field was left.
+    public static void Poll() {
+        try {
+            var element = AutomationElement.FocusedElement;
+            if (element == null) return;
+            var current = element.Current;
+            int owner = current.ProcessId;
+            if (Ignored(owner)) return;
+            bool typing = IsTypeable(element);
+            if (typing == _typing) return;
+            if (_typing && owner == _owner && current.ControlType == ControlType.Pane) return;
+            _owner = owner;
+            _label = current.ControlType.ProgrammaticName.Replace("ControlType.", "") + " '" + current.Name + "'";
+            _typing = typing;
+            System.Threading.Interlocked.Exchange(ref _changed, DateTime.UtcNow.Ticks);
+        } catch { }
+    }
+
+    static readonly System.Collections.Generic.Dictionary<int, bool> _ignored = new System.Collections.Generic.Dictionary<int, bool>();
+
+    static bool Ignored(int id) {
+        bool ignored;
+        if (_ignored.TryGetValue(id, out ignored)) return ignored;
+        string name = "";
+        try { name = System.Diagnostics.Process.GetProcessById(id).ProcessName; } catch { }
+        ignored = name == "TabTip" || name == "TextInputHost" || name == "osk";
+        _ignored[id] = ignored;
+        return ignored;
+    }
+
     static bool IsTypeable(AutomationElement element) {
         var current = element.Current;
         if (!current.IsEnabled || !current.IsKeyboardFocusable) return false;
@@ -138,6 +170,7 @@ $script:rechecked = [long]0
 $script:lastRemoteCheck = [datetime]::MinValue
 $script:lastStampCheck = [datetime]::MinValue
 $script:lastBeat = [datetime]::MinValue
+$script:lastPoll = [datetime]::MinValue
 
 while ($true) {
     $now = Get-Date
@@ -166,6 +199,10 @@ while ($true) {
                 Write-Log "The remote desktop client left."
             }
         }
+    }
+    if ($script:remote -and ($now - $script:lastPoll).TotalMilliseconds -ge 300) {
+        $script:lastPoll = $now
+        [FieldFocus]::Poll()
     }
     $changed = [FieldFocus]::Changed
     $owner = Get-ProcessName ([FieldFocus]::Owner)
