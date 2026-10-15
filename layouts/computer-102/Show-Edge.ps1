@@ -385,7 +385,7 @@ foreach ($zone in $presets[$Preset]) {
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
     $zoneUrl = Get-ZoneUrl $zone.Title
-    $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --remote-debugging-port=9333 --remote-allow-origins=* --app=`"$zoneUrl`" --new-window"
+    $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --force-renderer-accessibility --remote-debugging-port=9333 --remote-allow-origins=* --app=`"$zoneUrl`" --new-window"
     $startInfo.UseShellExecute = $true
     $started = New-Object System.Diagnostics.Process
     $started.StartInfo = $startInfo
@@ -660,7 +660,7 @@ function Start-ZoneEdge([string]$Url, [string]$Screen) {
     foreach ($existing in @($known.Keys)) { $seen[[int64]$existing] = $true }
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
-    $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --remote-debugging-port=9333 --remote-allow-origins=* --app=`"$Url`" --new-window"
+    $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --force-renderer-accessibility --remote-debugging-port=9333 --remote-allow-origins=* --app=`"$Url`" --new-window"
     $startInfo.UseShellExecute = $true
     $started = New-Object System.Diagnostics.Process
     $started.StartInfo = $startInfo
