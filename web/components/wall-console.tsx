@@ -34,6 +34,9 @@ const REMOTE_PANEL: Record<Computer, string> = {
 
 type Selection = { panel: PanelId; screen: string | "all" | "every" }
 
+// Frame borders are 2px. 4px is as close as neighboring colors can sit without stacking.
+const SCREEN_GAP = 4
+
 const PANEL_1: Screen[][] = [
   [
     { id: "TV1", hdmi: "HDMI 1" },
@@ -1118,7 +1121,7 @@ export function WallConsole() {
           </div>
           <div
             className="flex w-full items-stretch justify-center gap-2 [container-type:inline-size]"
-            style={{ ["--pad" as string]: "1.25rem", ["--seam" as string]: "12px", ["--tile" as string]: "max(0px, calc((100cqi - 4 * var(--pad) - 0.5rem - 3 * var(--seam)) / 5))" }}
+            style={{ ["--pad" as string]: "1.25rem", ["--seam" as string]: `${SCREEN_GAP}px`, ["--tile" as string]: "max(0px, calc((100cqi - 4 * var(--pad) - 0.5rem - 3 * var(--seam)) / 5))" }}
           >
             <ComputerFrame
               className="shrink-0"
@@ -1524,8 +1527,8 @@ function ScreenWall({
       style={{
         gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
         gridTemplateRows: `repeat(${rowCount}, auto)`,
-        columnGap: 12,
-        rowGap: 4,
+        columnGap: SCREEN_GAP,
+        rowGap: SCREEN_GAP,
       }}
     >
       {rows.map((row, r) =>
