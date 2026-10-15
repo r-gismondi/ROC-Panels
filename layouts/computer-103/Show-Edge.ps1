@@ -471,6 +471,26 @@ public static class PanelDesktop {
 }
 '@
 }
+if (-not ("PanelChild" -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class PanelChild {
+    [StructLayout(LayoutKind.Sequential)]
+    struct ChildRect { public int Left; public int Top; public int Right; public int Bottom; }
+    [DllImport("user32.dll")] public static extern IntPtr GetParent(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out ChildRect lpRect);
+    public static int Area(IntPtr hwnd) {
+        ChildRect rect;
+        if (!GetWindowRect(hwnd, out rect)) return 0;
+        int w = rect.Right - rect.Left;
+        int h = rect.Bottom - rect.Top;
+        if (w <= 0 || h <= 0) return 0;
+        return w * h;
+    }
+}
+'@
+}
 function Test-HostHome($item) {
     $text = [PanelWin]::RectOf($item.Host)
     if ($text -eq "unread") { return $false }
@@ -500,6 +520,7 @@ function Test-LayoutDesktop {
     return $true
 }
 $script:fitPasses = 0
+$script:noFsInstalled = @{}
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 1000
 $timer.Add_Tick({
@@ -516,18 +537,24 @@ $timer.Add_Tick({
         }
     }
     $needsRestore = $false
+    $needsRefit = $false
     if ($script:fitPasses -gt 3) {
         if (-not $ready) { return }
         foreach ($item in $opened) {
             if ($item.Kind -eq "app") { continue }
-            if (-not (Test-HostHome $item)) { $needsRestore = $true; break }
+            if (-not (Test-HostHome $item)) { $needsRestore = $true }
+            if (Test-EdgeChildBroken $item) { $needsRefit = $true }
         }
-        if (-not $needsRestore) { return }
+        # Page fullscreen on a SetParent Edge window blanks the tile (especially HDMI 2).
+        # Keep the HTML5 fullscreen API disabled, and re-fit if a child leaves its host.
+        if (($script:fitPasses % 5) -eq 0 -or $needsRefit) { Protect-ZoneFullscreen }
+        if ($needsRefit) { Exit-AllPageFullscreen }
+        if (-not $needsRestore -and -not $needsRefit) { return }
     }
     foreach ($item in $opened) {
         if ($item.Kind -eq "app") { continue }
         if (-not [PanelWin]::IsWindow($item.Hwnd)) { continue }
-        if ($needsRestore) { [void][PanelWin]::ShowWindow($item.Host, 9) }
+        if ($needsRestore -or $needsRefit) { [void][PanelWin]::ShowWindow($item.Host, 9) }
         [void][PanelWin]::Fit($item.Hwnd, $item.Host, $item.X, $item.Y, $item.W, $item.H)
     }
 })
@@ -626,12 +653,93 @@ function Open-ZonePage($Target, [string]$Url) {
         $socket = Open-CdpSocket $Target.webSocketDebuggerUrl
         $reply = Invoke-Cdp $socket 1 'Page.navigate' @{ url = $Url }
         if (-not $reply -or $reply.error) { return $false }
+        if ($Target.id) { [void]$script:noFsInstalled.Remove([string]$Target.id) }
         return $true
     } catch {
         return $false
     } finally {
         if ($socket) { try { $socket.Dispose() } catch {} }
     }
+}
+function Get-NoFullscreenScript {
+    return @'
+(() => {
+  if (window.__rocNoFs) return;
+  window.__rocNoFs = true;
+  const block = function () {
+    try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) {}
+    return Promise.resolve();
+  };
+  const proto = Element.prototype;
+  proto.requestFullscreen = block;
+  proto.webkitRequestFullscreen = block;
+  proto.mozRequestFullScreen = block;
+  proto.msRequestFullscreen = block;
+  document.addEventListener("fullscreenchange", () => {
+    if (document.fullscreenElement) {
+      try { document.exitFullscreen(); } catch (e) {}
+    }
+  }, true);
+})();
+'@
+}
+function Install-NoFullscreenOnTarget($Target) {
+    if (-not $Target -or -not $Target.webSocketDebuggerUrl) { return $false }
+    $socket = $null
+    try {
+        $socket = Open-CdpSocket $Target.webSocketDebuggerUrl
+        $script = Get-NoFullscreenScript
+        $id = [string]$Target.id
+        if ($id -and -not $script:noFsInstalled.ContainsKey($id)) {
+            $null = Invoke-Cdp $socket 1 'Page.enable' $null
+            $null = Invoke-Cdp $socket 2 'Page.addScriptToEvaluateOnNewDocument' @{ source = $script }
+            $script:noFsInstalled[$id] = $true
+        }
+        $null = Invoke-Cdp $socket 3 'Runtime.evaluate' @{ expression = $script; returnByValue = $true }
+        return $true
+    } catch {
+        return $false
+    } finally {
+        if ($socket) { try { $socket.Dispose() } catch {} }
+    }
+}
+function Protect-ZoneFullscreen {
+    try {
+        $list = @(Invoke-RestMethod -Uri 'http://127.0.0.1:9333/json/list' -TimeoutSec 2)
+    } catch { return }
+    foreach ($target in $list) {
+        if ($target.type -ne 'page' -or $target.url -like 'devtools://*') { continue }
+        [void](Install-NoFullscreenOnTarget $target)
+    }
+}
+function Exit-AllPageFullscreen {
+    try {
+        $list = @(Invoke-RestMethod -Uri 'http://127.0.0.1:9333/json/list' -TimeoutSec 2)
+    } catch { return }
+    foreach ($target in $list) {
+        if ($target.type -ne 'page' -or $target.url -like 'devtools://*') { continue }
+        $socket = $null
+        try {
+            $socket = Open-CdpSocket $target.webSocketDebuggerUrl
+            $null = Invoke-Cdp $socket 1 'Runtime.evaluate' @{
+                expression = 'try{if(document.fullscreenElement)document.exitFullscreen()}catch(e){};true'
+                returnByValue = $true
+            }
+        } catch {}
+        finally { if ($socket) { try { $socket.Dispose() } catch {} } }
+    }
+}
+function Test-EdgeChildBroken($Item) {
+    if ($Item.Kind -ne "edge") { return $false }
+    if (-not $Item.Hwnd -or $Item.Hwnd -eq [IntPtr]::Zero) { return $false }
+    if (-not [PanelWin]::IsWindow($Item.Hwnd)) { return $true }
+    if ([PanelChild]::GetParent($Item.Hwnd) -ne $Item.Host) { return $true }
+    $widget = [PanelWin]::PageWidget($Item.Hwnd)
+    if ($widget -eq [IntPtr]::Zero) { return $true }
+    $area = [PanelChild]::Area($widget)
+    $min = [Math]::Floor(($Item.W * $Item.H) / 4)
+    if ($area -lt $min) { return $true }
+    return $false
 }
 function Start-ZoneEdge([string]$Url, [string]$Screen) {
     $seen = @{}
@@ -732,6 +840,7 @@ $urlTimer.Add_Tick({
             foreach ($name in $saveNames) {
                 [System.IO.File]::WriteAllText((Join-Path $saveDir ($name + ".txt")), $url, $utf8)
             }
+            Protect-ZoneFullscreen
             [System.IO.File]::WriteAllText($resultPath, "ok", $utf8)
         } catch {
             $reason = $_.Exception.Message
