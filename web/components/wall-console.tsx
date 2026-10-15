@@ -34,6 +34,9 @@ const REMOTE_PANEL: Record<Computer, string> = {
 
 type Selection = { panel: PanelId; screen: string | "all" | "every" }
 
+// Frame borders are 2px. 4px is as close as neighboring colors can sit without stacking.
+const SCREEN_GAP = 4
+
 const PANEL_1: Screen[][] = [
   [
     { id: "TV1", hdmi: "HDMI 1" },
@@ -156,6 +159,11 @@ function presetById(list: Preset[], id: string, fallbackId: string) {
   return list.find((item) => item.id === id) ?? list.find((item) => item.id === fallbackId) ?? list[0]
 }
 
+function chosenPreset(list: Preset[], id: string) {
+  if (!id) return null
+  return list.find((item) => item.id === id) ?? null
+}
+
 function savedPreset(id: string | undefined, allowed: string[]) {
   if (!id || id === "close" || !allowed.includes(id)) return ""
   return id
@@ -272,7 +280,7 @@ export function WallConsole() {
     let cancel = false
     void (async () => {
       try {
-        const response = await fetch("/api/layout")
+        const response = await fetch("/api/layout", { cache: "no-store" })
         const body = (await response.json()) as { layouts?: Record<string, string> }
         if (cancel || !body.layouts) return
         const panel1 = savedPreset(body.layouts["101"], PRESETS[1].map((item) => item.id))
@@ -355,8 +363,8 @@ export function WallConsole() {
   const shownBrightness = sameBrightness
     ? brightnessValues[0]
     : Math.round(brightnessValues.reduce((sum, value) => sum + value, 0) / brightnessValues.length)
-  const computer2Preset = presetById(PRESETS[2], preset[2], "focus")
-  const activeComputer3Preset = presetById(COMPUTER_3_PRESETS, computer3Preset, "independent")
+  const computer2Preset = chosenPreset(PRESETS[2], preset[2])
+  const activeComputer3Preset = chosenPreset(COMPUTER_3_PRESETS, computer3Preset) ?? COMPUTER_3_PRESETS[0]
   const pending1 = preset[1] !== "" && preset[1] !== applied[1]
   const pending2 = preset[2] !== "" && preset[2] !== applied[2]
   const pending3 = computer3Preset !== "" && computer3Preset !== computer3Applied
@@ -778,7 +786,7 @@ export function WallConsole() {
     const known = computer === "101" ? applied[1] : computer === "102" ? applied[2] : computer3Applied
     if (known) return known
     try {
-      const response = await fetch("/api/layout")
+      const response = await fetch("/api/layout", { cache: "no-store" })
       const body = (await response.json()) as { layouts?: Record<string, string> }
       const allowed = computer === "103" ? COMPUTER_3_PRESETS.map((item) => item.id) : computer === "101" ? PRESETS[1].map((item) => item.id) : PRESETS[2].map((item) => item.id)
       const saved = savedPreset(body.layouts?.[computer], allowed)
@@ -1077,7 +1085,7 @@ export function WallConsole() {
           title="Panel 1"
           detail="Screens 1–8"
           rows={PANEL_1}
-          preset={presetById(PRESETS[1], preset[1], "focus")}
+          preset={chosenPreset(PRESETS[1], preset[1])}
           pending={pending1}
           selection={selection}
           power={power}
@@ -1113,7 +1121,7 @@ export function WallConsole() {
           </div>
           <div
             className="flex w-full items-stretch justify-center gap-2 [container-type:inline-size]"
-            style={{ ["--pad" as string]: "1.25rem", ["--seam" as string]: "4px", ["--tile" as string]: "max(0px, calc((100cqi - 4 * var(--pad) - 0.5rem - 3 * var(--seam)) / 5))" }}
+            style={{ ["--pad" as string]: "1.25rem", ["--seam" as string]: `${SCREEN_GAP}px`, ["--tile" as string]: "max(0px, calc((100cqi - 4 * var(--pad) - 0.5rem - 3 * var(--seam)) / 5))" }}
           >
             <ComputerFrame
               className="shrink-0"
@@ -1375,7 +1383,7 @@ function PanelFrame({
   title: string
   detail: string
   rows: Screen[][]
-  preset: Preset
+  preset: Preset | null
   pending: boolean
   selection: Selection
   power: Record<string, boolean>
@@ -1445,7 +1453,7 @@ function ComputerFrame({
   className?: string
   style?: CSSProperties
   rows: Screen[][]
-  preset: Preset
+  preset: Preset | null
   pending: boolean
   selected: boolean
   selection: Selection
@@ -1498,7 +1506,7 @@ function ScreenWall({
   dropTarget,
 }: {
   rows: Screen[][]
-  preset: Preset
+  preset: Preset | null
   pending: boolean
   selection: Selection
   power: Record<string, boolean>
@@ -1511,14 +1519,16 @@ function ScreenWall({
 }) {
   const columns = rows.reduce((count, row) => Math.max(count, row.length), 1)
   const rowCount = rows.length
-  const zones = presetZones(rows, preset)
+  const zones = preset ? presetZones(rows, preset) : []
   const entrance = "zone-in 560ms cubic-bezier(0.22, 1, 0.36, 1) both"
   return (
     <div
-      className="relative grid w-full gap-1 p-5"
+      className="relative grid w-full p-5"
       style={{
         gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
         gridTemplateRows: `repeat(${rowCount}, auto)`,
+        columnGap: SCREEN_GAP,
+        rowGap: SCREEN_GAP,
       }}
     >
       {rows.map((row, r) =>
@@ -1542,10 +1552,14 @@ function ScreenWall({
         <div
           key={zone.key}
           aria-hidden="true"
-          className="pointer-events-none relative z-[15] -m-[3px] rounded-md border-[3px]"
+          className="pointer-events-none absolute z-[15] rounded-sm border-2"
           style={{
             gridRow: `${zone.row} / span ${zone.rows}`,
             gridColumn: `${zone.col} / span ${zone.cols}`,
+            top: 0,
+            right: 0,
+            bottom: 0,
+            left: 0,
             borderColor: zone.color,
             borderStyle: pending ? "dashed" : "solid",
             ["--zone" as string]: zone.color,
@@ -1553,7 +1567,7 @@ function ScreenWall({
           }}
         >
           <span
-            className="absolute -top-2.5 -left-2.5 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[11px] font-semibold leading-none text-[#03102e] shadow-[0_0_8px_rgba(0,0,0,0.5)]"
+            className="absolute top-1 left-1 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[11px] font-semibold leading-none text-[#03102e] shadow-[0_0_8px_rgba(0,0,0,0.5)]"
             style={{ background: zone.color }}
           >
             {index + 1}
@@ -1650,7 +1664,7 @@ function ScreenButton({
   dropTarget,
 }: {
   screen: Screen
-  preset: Preset
+  preset: Preset | null
   selected: boolean
   on: boolean
   thumbStamp: number
@@ -1659,8 +1673,8 @@ function ScreenButton({
   onPress: () => void
   dropTarget: string
 }) {
-  const group = preset.groups[screen.id] ?? 0
-  const color = GROUP_COLOR[group % GROUP_COLOR.length]
+  const group = preset ? preset.groups[screen.id] : undefined
+  const color = group == null ? "#7eb6ff" : GROUP_COLOR[group % GROUP_COLOR.length]
   const number = screen.id.replace("TV", "")
   const hot = dropTarget === screen.id
   return (
@@ -1676,7 +1690,7 @@ function ScreenButton({
         event.stopPropagation()
         onSelect()
       }}
-      className="relative aspect-video w-full min-w-0 touch-manipulation overflow-hidden rounded-sm border text-center transition-[border-color,box-shadow,background-color] duration-200"
+      className="relative block aspect-video w-full min-w-0 touch-manipulation overflow-hidden rounded-sm border text-center transition-[border-color,box-shadow,background-color] duration-200"
       style={{
         borderColor: hot || selected ? "#ffffff" : color,
         background: on ? `${color}33` : "rgba(0,0,0,0.45)",

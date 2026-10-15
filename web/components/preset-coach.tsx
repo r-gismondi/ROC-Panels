@@ -84,7 +84,7 @@ export function PresetCoach({ rows, preset }: { rows: Screen[][]; preset: Preset
       <p className="px-3 pt-3 text-[11px] tracking-[0.18em] text-cyan-100/70">PREVIEW · EACH COLORED BOX IS ONE EDGE WINDOW</p>
       <div ref={stageRef} className="relative min-h-48 flex-1">
         <div
-          className="mx-auto mt-3 grid gap-1.5"
+          className="relative mx-auto mt-3 grid gap-x-3 gap-y-1.5"
           style={{
             gridTemplateColumns: `repeat(${columns}, 4.5rem)`,
             gridTemplateRows: `repeat(${rows.length}, auto)`,
@@ -106,13 +106,17 @@ export function PresetCoach({ rows, preset }: { rows: Screen[][]; preset: Preset
             <div
               key={zone.key}
               data-coach="zone"
-              className="pointer-events-none relative -m-[3px] overflow-hidden rounded-md border-2 opacity-0"
+              className="pointer-events-none absolute overflow-hidden rounded-sm border-2 opacity-0"
               style={{
                 gridRow: `${zone.row} / span ${zone.rows}`,
                 gridColumn: `${zone.col} / span ${zone.cols}`,
+                top: 0,
+                right: 0,
+                bottom: 0,
+                left: 0,
                 borderColor: zone.color,
                 background: `${zone.color}26`,
-                boxShadow: `0 0 12px ${zone.color}`,
+                boxShadow: `0 0 6px ${zone.color}`,
               }}
             >
               <span
