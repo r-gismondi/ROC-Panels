@@ -332,6 +332,22 @@ if (-not $Preset) { Write-Error "Pick a preset."; exit 1 }
 $edge = Find-Edge
 if (-not $edge) { Write-Error "Microsoft Edge was not found."; exit 1 }
 
+# C-Connect fullscreen on a SetParent Edge window blanks HDMI 2. Turn fullscreen off for this PC.
+function Disable-EdgeFullscreenPolicy {
+    foreach ($root in @(
+        "HKCU:\SOFTWARE\Policies\Microsoft\Edge",
+        "HKLM:\SOFTWARE\Policies\Microsoft\Edge"
+    )) {
+        try {
+            if (-not (Test-Path -LiteralPath $root)) {
+                New-Item -Path $root -Force | Out-Null
+            }
+            New-ItemProperty -Path $root -Name "FullscreenAllowed" -PropertyType DWord -Value 0 -Force | Out-Null
+        } catch {}
+    }
+}
+Disable-EdgeFullscreenPolicy
+
 Stop-LayoutEdge $root
 Close-RecordedWindows $hwndFile
 Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -385,7 +401,7 @@ foreach ($zone in $presets[$Preset]) {
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
     $zoneUrl = Get-ZoneUrl $zone.Title
-    $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --force-renderer-accessibility --remote-debugging-port=9333 --remote-allow-origins=* --app=`"$zoneUrl`" --new-window"
+    $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --force-renderer-accessibility --remote-debugging-port=9333 --remote-allow-origins=* --window-position=$($zone.X),$($zone.Y) --window-size=$drawW,$drawH --app=`"$zoneUrl`" --new-window"
     $startInfo.UseShellExecute = $true
     $started = New-Object System.Diagnostics.Process
     $started.StartInfo = $startInfo
@@ -500,7 +516,11 @@ public static class PanelChild {
     [StructLayout(LayoutKind.Sequential)]
     struct ChildRect { public int Left; public int Top; public int Right; public int Bottom; }
     [DllImport("user32.dll")] public static extern IntPtr GetParent(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLong")] static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLong")] static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out ChildRect lpRect);
+    [DllImport("user32.dll")] static extern bool InvalidateRect(IntPtr hWnd, IntPtr lpRect, bool bErase);
     public static int Area(IntPtr hwnd) {
         ChildRect rect;
         if (!GetWindowRect(hwnd, out rect)) return 0;
@@ -508,6 +528,14 @@ public static class PanelChild {
         int h = rect.Bottom - rect.Top;
         if (w <= 0 || h <= 0) return 0;
         return w * h;
+    }
+    // Pull Edge out of the host so Fit() can SetParent again after a bad fullscreen.
+    public static void Orphan(IntPtr hwnd) {
+        SetParent(hwnd, IntPtr.Zero);
+        int style = GetWindowLong32(hwnd, -16);
+        style &= ~0x40000000;
+        SetWindowLong32(hwnd, -16, style);
+        InvalidateRect(hwnd, IntPtr.Zero, true);
     }
 }
 '@
@@ -567,15 +595,19 @@ $timer.Add_Tick({
             if (Test-EdgeChildBroken $item) { $needsRefit = $true }
         }
         # Page fullscreen on a SetParent Edge window blanks the tile (especially HDMI 2).
-        # Keep the HTML5 fullscreen API disabled, and re-fit if a child leaves its host.
-        if (($script:fitPasses % 5) -eq 0 -or $needsRefit) { Protect-ZoneFullscreen }
-        if ($needsRefit) { Exit-AllPageFullscreen }
+        # Poll every second: exit fullscreen, keep the API blocked, and hard-refit if needed.
+        Protect-ZoneFullscreen
+        $wasFullscreen = Exit-AllPageFullscreen
+        if ($wasFullscreen) { $needsRefit = $true }
         if (-not $needsRestore -and -not $needsRefit) { return }
     }
     foreach ($item in $opened) {
         if ($item.Kind -eq "app") { continue }
         if (-not [PanelWin]::IsWindow($item.Hwnd)) { continue }
         if ($needsRestore -or $needsRefit) { [void][PanelWin]::ShowWindow($item.Host, 9) }
+        if ($needsRefit) {
+            try { [PanelChild]::Orphan($item.Hwnd) } catch {}
+        }
         [void][PanelWin]::Fit($item.Hwnd, $item.Host, $item.X, $item.Y, $item.W, $item.H)
     }
 })
@@ -685,22 +717,31 @@ function Open-ZonePage($Target, [string]$Url) {
 function Get-NoFullscreenScript {
     return @'
 (() => {
-  if (window.__rocNoFs) return;
-  window.__rocNoFs = true;
-  const block = function () {
-    try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) {}
-    return Promise.resolve();
+  const patch = (win) => {
+    try {
+      if (!win || win.__rocNoFs) return;
+      win.__rocNoFs = true;
+      const block = function () {
+        try { if (win.document.fullscreenElement) win.document.exitFullscreen(); } catch (e) {}
+        return Promise.resolve();
+      };
+      const proto = win.Element.prototype;
+      proto.requestFullscreen = block;
+      proto.webkitRequestFullscreen = block;
+      proto.mozRequestFullScreen = block;
+      proto.msRequestFullscreen = block;
+      win.document.addEventListener("fullscreenchange", () => {
+        if (win.document.fullscreenElement) {
+          try { win.document.exitFullscreen(); } catch (e) {}
+        }
+      }, true);
+    } catch (e) {}
   };
-  const proto = Element.prototype;
-  proto.requestFullscreen = block;
-  proto.webkitRequestFullscreen = block;
-  proto.mozRequestFullScreen = block;
-  proto.msRequestFullscreen = block;
-  document.addEventListener("fullscreenchange", () => {
-    if (document.fullscreenElement) {
-      try { document.exitFullscreen(); } catch (e) {}
-    }
-  }, true);
+  patch(window);
+  try {
+    const frames = window.frames;
+    for (let i = 0; i < frames.length; i++) patch(frames[i]);
+  } catch (e) {}
 })();
 '@
 }
@@ -734,21 +775,30 @@ function Protect-ZoneFullscreen {
     }
 }
 function Exit-AllPageFullscreen {
+    $found = $false
     try {
         $list = @(Invoke-RestMethod -Uri 'http://127.0.0.1:9333/json/list' -TimeoutSec 2)
-    } catch { return }
+    } catch { return $false }
     foreach ($target in $list) {
         if ($target.type -ne 'page' -or $target.url -like 'devtools://*') { continue }
         $socket = $null
         try {
             $socket = Open-CdpSocket $target.webSocketDebuggerUrl
-            $null = Invoke-Cdp $socket 1 'Runtime.evaluate' @{
-                expression = 'try{if(document.fullscreenElement)document.exitFullscreen()}catch(e){};true'
+            $check = Invoke-Cdp $socket 1 'Runtime.evaluate' @{
+                expression = '!!(document.fullscreenElement||document.webkitFullscreenElement)'
                 returnByValue = $true
+            }
+            if ($check -and $check.result -and $check.result.result -and [bool]$check.result.result.value) {
+                $found = $true
+                $null = Invoke-Cdp $socket 2 'Runtime.evaluate' @{
+                    expression = 'try{if(document.fullscreenElement)document.exitFullscreen();if(document.webkitFullscreenElement)document.webkitExitFullscreen()}catch(e){};true'
+                    returnByValue = $true
+                }
             }
         } catch {}
         finally { if ($socket) { try { $socket.Dispose() } catch {} } }
     }
+    return $found
 }
 function Test-EdgeChildBroken($Item) {
     if ($Item.Kind -ne "edge") { return $false }
@@ -768,7 +818,7 @@ function Start-ZoneEdge([string]$Url, [string]$Screen) {
     foreach ($existing in @($known.Keys)) { $seen[[int64]$existing] = $true }
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
-    $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --force-renderer-accessibility --remote-debugging-port=9333 --remote-allow-origins=* --app=`"$Url`" --new-window"
+    $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --force-renderer-accessibility --remote-debugging-port=9333 --remote-allow-origins=* --app=`"$Url`" --new-window --window-position=0,0"
     $startInfo.UseShellExecute = $true
     $started = New-Object System.Diagnostics.Process
     $started.StartInfo = $startInfo
