@@ -203,6 +203,7 @@ export function WallConsole() {
   const [linkStatus, setLinkStatus] = useState("")
   const [browseBusy, setBrowseBusy] = useState(false)
   const [linkEditorOpen, setLinkEditorOpen] = useState(false)
+  const [editingLinkId, setEditingLinkId] = useState("")
   const [linkName, setLinkName] = useState("")
   const [linkUrl, setLinkUrl] = useState("")
   const [linkField, setLinkField] = useState<"name" | "url">("name")
@@ -256,6 +257,7 @@ export function WallConsole() {
       if (event.data !== "home") return
       setKeyboardOpen(false)
       setLinkEditorOpen(false)
+      setEditingLinkId("")
       setViewEditorOpen(false)
       setPanelGuardOpen(false)
       setRemoteAsk("")
@@ -298,6 +300,7 @@ export function WallConsole() {
       const target = event.target
       if (target instanceof Element && target.closest("[data-link-editor]")) return
       setLinkEditorOpen(false)
+      setEditingLinkId("")
     }
     window.addEventListener("pointerdown", closeEditor, true)
     return () => window.removeEventListener("pointerdown", closeEditor, true)
@@ -1276,7 +1279,7 @@ export function WallConsole() {
     setBrowseBusy(true)
     setProgramStatus("")
     setArmedLink("")
-    setLinkEditorOpen(false)
+    closeLinkEditor()
     setLayoutStatus("Choose a program.")
     try {
       const response = await fetch("/api/apps", {
@@ -1317,12 +1320,13 @@ export function WallConsole() {
     }
   }
 
-  function openLinkEditor() {
+  function openLinkEditor(link?: SavedLink) {
     setArmedApp("")
     setArmedLink("")
     setLinkStatus("")
-    setLinkName("")
-    setLinkUrl("https://")
+    setEditingLinkId(link?.id ?? "")
+    setLinkName(link?.name ?? "")
+    setLinkUrl(link?.url ?? "https://")
     setLinkField("name")
     setLinkReplace(false)
     linkCaret.current = { start: 0, end: 0 }
@@ -1332,8 +1336,19 @@ export function WallConsole() {
       const input = linkNameRef.current
       if (!input) return
       input.focus()
-      input.setSelectionRange(0, 0)
+      if (link) {
+        input.setSelectionRange(0, input.value.length)
+        setLinkReplace(true)
+        linkCaret.current = { start: 0, end: input.value.length }
+      } else {
+        input.setSelectionRange(0, 0)
+      }
     })
+  }
+
+  function closeLinkEditor() {
+    setLinkEditorOpen(false)
+    setEditingLinkId("")
   }
 
   function focusLinkField(field: "name" | "url", selectAll = false) {
@@ -1420,19 +1435,24 @@ export function WallConsole() {
     if (linkBusy) return
     setLinkBusy(true)
     setLinkStatus("")
+    const editing = editingLinkId !== ""
     try {
       const response = await fetch("/api/links", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "add", name: linkName, url: linkUrl }),
+        body: JSON.stringify(
+          editing
+            ? { action: "update", id: editingLinkId, name: linkName, url: linkUrl }
+            : { action: "add", name: linkName, url: linkUrl },
+        ),
       })
       const body = (await response.json().catch(() => null)) as { links?: SavedLink[]; selectedId?: string; error?: string } | null
       if (!response.ok || !body?.links) {
-        setLinkStatus(body?.error || "The site could not be saved.")
+        setLinkStatus(body?.error || (editing ? "The site could not be updated." : "The site could not be saved."))
         return
       }
       setLinks(body.links)
-      setLinkEditorOpen(false)
+      closeLinkEditor()
       if (body.selectedId) {
         setArmedApp("")
         setArmedLink(body.selectedId)
@@ -1474,7 +1494,7 @@ export function WallConsole() {
     onEnter: () => {
       void saveLink()
     },
-    onEscape: () => setLinkEditorOpen(false),
+    onEscape: () => closeLinkEditor(),
   })
   const viewEditorPresence = usePresence(viewEditorOpen)
   const panelGuardPresence = usePresence(panelGuardOpen)
@@ -1606,7 +1626,7 @@ export function WallConsole() {
                       type="button"
                       data-typeable
                       onClick={() => {
-                        setLinkEditorOpen(false)
+                        closeLinkEditor()
                         setKeyboardOpen(true)
                         setReplaceAddress(true)
                       }}
@@ -1877,42 +1897,50 @@ export function WallConsole() {
                 ? linkStatus
                 : armedLink
                   ? "Tap a screen to open it there. Tap anywhere else to cancel."
-                  : "Add a site name and address, then tap a screen or drag it onto one."
+                  : "Add or edit a site, then tap a screen or drag it onto one."
             }
             className="line-clamp-2 min-h-10 text-xs leading-5 text-cyan-100/80"
           />
         </div>
         <div className="flex items-stretch gap-2 overflow-x-auto overflow-y-hidden pb-1">
-          <GlowButton active={linkEditorOpen} onClick={openLinkEditor}>
+          <GlowButton active={linkEditorOpen && !editingLinkId} onClick={() => openLinkEditor()}>
             Add site
           </GlowButton>
-          {links.map((link) => (
-            <div key={link.id} className="flex shrink-0">
-              <button
-                type="button"
-                data-link-id={link.id}
-                {...linkPointer(link.id)}
-                className={`flex min-h-11 max-w-56 cursor-grab touch-none items-center gap-2 rounded-l-lg border border-r-0 px-3 text-sm tracking-wide select-none active:cursor-grabbing ${
-                  armedLink === link.id
-                    ? "border-cyan-200 bg-cyan-400/25 shadow-[0_0_16px_rgba(80,200,255,0.35)]"
-                    : "border-cyan-300/35 bg-[#08245f]/80"
-                }`}
-              >
-                <LinkGlyph />
-                <span className="min-w-0 truncate">{link.name}</span>
-              </button>
-              <button
-                type="button"
-                aria-label={`Remove ${link.name}`}
-                onClick={() => void removeSavedLink(link.id)}
-                className={`min-h-11 rounded-r-lg border px-3 text-sm ${
-                  armedLink === link.id ? "border-cyan-200 bg-cyan-400/25" : "border-cyan-300/35 bg-[#08245f]/80"
-                }`}
-              >
-                ×
-              </button>
-            </div>
-          ))}
+          {links.map((link) => {
+            const active = armedLink === link.id || editingLinkId === link.id
+            const chip = active
+              ? "border-cyan-200 bg-cyan-400/25 shadow-[0_0_16px_rgba(80,200,255,0.35)]"
+              : "border-cyan-300/35 bg-[#08245f]/80"
+            return (
+              <div key={link.id} className="flex shrink-0">
+                <button
+                  type="button"
+                  data-link-id={link.id}
+                  {...linkPointer(link.id)}
+                  className={`flex min-h-11 max-w-56 cursor-grab touch-none items-center gap-2 rounded-l-lg border border-r-0 px-3 text-sm tracking-wide select-none active:cursor-grabbing ${chip}`}
+                >
+                  <LinkGlyph />
+                  <span className="min-w-0 truncate">{link.name}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Edit ${link.name}`}
+                  onClick={() => openLinkEditor(link)}
+                  className={`min-h-11 border border-x-0 px-3 text-sm tracking-wide ${chip}`}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Remove ${link.name}`}
+                  onClick={() => void removeSavedLink(link.id)}
+                  className={`min-h-11 rounded-r-lg border px-3 text-sm ${chip}`}
+                >
+                  ×
+                </button>
+              </div>
+            )
+          })}
         </div>
       </section>
       </div>
@@ -2026,7 +2054,7 @@ export function WallConsole() {
           >
             <p className="text-[11px] tracking-[0.18em] text-cyan-100/70">WEB ADDRESSES</p>
             <p id="link-editor-title" className="mt-1 text-2xl font-semibold tracking-wide">
-              Save a site
+              {editingLinkId ? "Edit site" : "Save a site"}
             </p>
             <p className="mt-2 text-xs text-cyan-100/70">Type on this keyboard, a physical keyboard, or paste with Ctrl+V.</p>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -2078,9 +2106,9 @@ export function WallConsole() {
                 onEnter={() => void saveLink()}
                 footer={
                   <div className="mt-2 grid grid-cols-2 gap-3">
-                    <GlowButton onClick={() => setLinkEditorOpen(false)}>Cancel</GlowButton>
+                    <GlowButton onClick={closeLinkEditor}>Cancel</GlowButton>
                     <GlowButton active onClick={() => void saveLink()}>
-                      {linkBusy ? "Saving…" : "Save"}
+                      {linkBusy ? "Saving…" : editingLinkId ? "Save changes" : "Save"}
                     </GlowButton>
                   </div>
                 }

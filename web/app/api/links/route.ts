@@ -1,4 +1,4 @@
-import { addLink, launchLink, readLinks, removeLink } from "@/lib/saved-links"
+import { addLink, launchLink, readLinks, removeLink, updateLink } from "@/lib/saved-links"
 import { NextResponse } from "next/server"
 
 export const runtime = "nodejs"
@@ -23,6 +23,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Type a name and an address." }, { status: 400 })
     }
     const result = addLink(body.name, body.url)
+    if (!result.ok) return NextResponse.json({ error: result.message }, { status: 400 })
+    return NextResponse.json({ links: result.links, selectedId: result.selectedId })
+  }
+  if (body.action === "update") {
+    if (typeof body.id !== "string" || typeof body.name !== "string" || typeof body.url !== "string") {
+      return NextResponse.json({ error: "Type a name and an address." }, { status: 400 })
+    }
+    const result = updateLink(body.id, body.name, body.url)
     if (!result.ok) return NextResponse.json({ error: result.message }, { status: 400 })
     return NextResponse.json({ links: result.links, selectedId: result.selectedId })
   }
