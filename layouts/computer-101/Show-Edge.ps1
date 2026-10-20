@@ -225,7 +225,10 @@ function Stop-LayoutEdge([string]$Root) {
     try {
         $procs = Get-CimInstance Win32_Process -Filter "Name = 'msedge.exe'" -ErrorAction SilentlyContinue
         foreach ($proc in @($procs)) {
-            if ($proc.CommandLine -and $proc.CommandLine -like "*$Root\edge-profiles*") {
+            if ($proc.CommandLine -and (
+                $proc.CommandLine -like "*$Root\edge-profiles*" -or
+                $proc.CommandLine -like "*$Root\edge-data*"
+            )) {
                 & cmd.exe /c "taskkill /PID $($proc.ProcessId) /T /F >nul 2>&1" | Out-Null
             }
         }
@@ -281,6 +284,11 @@ function Close-RecordedWindows([string]$Path) {
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $hwndFile = Join-Path $root "edge-layout.hwnds"
 $hostPidFile = Join-Path $root "edge-host.pid"
+$edgeData = Join-Path $root "edge-data"
+New-Item -ItemType Directory -Force -Path $edgeData | Out-Null
+function Get-EdgeLaunchArgs([string]$Extra) {
+    return "--user-data-dir=`"$edgeData`" --no-first-run --no-default-browser-check --disable-features=Windows10CustomTitlebar --force-renderer-accessibility --remote-debugging-port=9333 --remote-allow-origins=* $Extra"
+}
 function Stop-HostProcess([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return }
     $old = 0
@@ -417,8 +425,8 @@ foreach ($zone in $activeZones) {
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
     $zoneUrl = Get-ZoneUrl $zone.Title
-    $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --force-renderer-accessibility --remote-debugging-port=9333 --remote-allow-origins=* --window-position=$($zone.X),$($zone.Y) --window-size=$drawW,$drawH --app=`"$zoneUrl`" --new-window"
-    $startInfo.UseShellExecute = $true
+    $startInfo.Arguments = Get-EdgeLaunchArgs "--window-position=$($zone.X),$($zone.Y) --window-size=$drawW,$drawH --app=`"$zoneUrl`" --new-window"
+    $startInfo.UseShellExecute = $false
     $started = New-Object System.Diagnostics.Process
     $started.StartInfo = $startInfo
     [void]$started.Start()
@@ -844,11 +852,16 @@ function Restore-ItemFromFullscreen($Item) {
     $Item.Form.Adopt($Item.Hwnd)
     $Item.Fullscreen = $false
 }
+$script:cdpNextTry = [datetime]::MinValue
 function Update-ZoneFullscreen {
     if ($script:urlBusy) { return }
+    if ((Get-Date) -lt $script:cdpNextTry) { return }
     try {
         $list = @(Invoke-RestMethod -Uri 'http://127.0.0.1:9333/json/list' -TimeoutSec 1)
-    } catch { return }
+    } catch {
+        $script:cdpNextTry = (Get-Date).AddSeconds(5)
+        return
+    }
     foreach ($item in @($script:opened)) {
         if ($item.Kind -ne "edge") { continue }
         if (-not $item.Hwnd -or $item.Hwnd -eq [IntPtr]::Zero) { continue }
@@ -883,8 +896,8 @@ function Start-ZoneEdge([string]$Url, [string]$Screen) {
     foreach ($existing in @($known.Keys)) { $seen[[int64]$existing] = $true }
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
-    $startInfo.Arguments = "--disable-features=Windows10CustomTitlebar --force-renderer-accessibility --remote-debugging-port=9333 --remote-allow-origins=* --app=`"$Url`" --new-window --window-position=0,0"
-    $startInfo.UseShellExecute = $true
+    $startInfo.Arguments = Get-EdgeLaunchArgs "--app=`"$Url`" --new-window --window-position=0,0"
+    $startInfo.UseShellExecute = $false
     $started = New-Object System.Diagnostics.Process
     $started.StartInfo = $startInfo
     [void]$started.Start()
