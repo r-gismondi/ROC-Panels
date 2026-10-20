@@ -1,5 +1,6 @@
 # Reloads open Edge pages on this wall PC through the shared DevTools port.
 # Queued from the pedestal so it works without restarting Show-Edge.ps1.
+# Falls back to F5 on the recorded layout windows when the debug port is down.
 param(
     [Parameter(Mandatory = $true)][string]$Root,
     [string]$Screen = "ALL"
@@ -14,6 +15,20 @@ $utf8 = New-Object System.Text.UTF8Encoding $false
 
 function Write-Result([string]$Text) {
     [System.IO.File]::WriteAllText($resultPath, $Text, $utf8)
+}
+
+if (-not ("RefreshWin" -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class RefreshWin {
+    public const uint WM_KEYDOWN = 0x0100;
+    public const uint WM_KEYUP = 0x0101;
+    public const int VK_F5 = 0x74;
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+}
+"@
 }
 
 function New-CdpTimeout([int]$Milliseconds) {
@@ -86,34 +101,73 @@ function Refresh-Page([string]$DebuggerUrl) {
     }
 }
 
-try {
-    Write-Result "working"
+function Get-LayoutHwnds {
+    $hwndFile = Join-Path $Root "edge-layout.hwnds"
+    if (-not (Test-Path -LiteralPath $hwndFile)) { return @() }
+    $list = @()
+    foreach ($line in @(Get-Content -LiteralPath $hwndFile -ErrorAction SilentlyContinue)) {
+        $value = 0L
+        if (-not [int64]::TryParse(([string]$line).Trim(), [ref]$value) -or $value -eq 0) { continue }
+        $hwnd = [IntPtr]$value
+        if ([RefreshWin]::IsWindow($hwnd)) { $list += $hwnd }
+    }
+    return $list
+}
+
+function Refresh-Hwnds {
+    $hwnds = @(Get-LayoutHwnds)
+    if ($hwnds.Count -lt 1) { return $false }
+    $ok = 0
+    foreach ($hwnd in $hwnds) {
+        $down = [RefreshWin]::PostMessage($hwnd, [RefreshWin]::WM_KEYDOWN, [IntPtr][RefreshWin]::VK_F5, [IntPtr]0x00390001)
+        $up = [RefreshWin]::PostMessage($hwnd, [RefreshWin]::WM_KEYUP, [IntPtr][RefreshWin]::VK_F5, [IntPtr]0xC0390001)
+        if ($down -or $up) { $ok += 1 }
+    }
+    return ($ok -gt 0)
+}
+
+function Refresh-ViaCdp {
     $list = @()
     try {
         $list = @(Invoke-RestMethod -Uri 'http://127.0.0.1:9333/json/list' -TimeoutSec 3)
     } catch {
-        Write-Result "error Edge is not open on those screens."
-        exit 1
+        return "down"
     }
     $pages = @(
         $list | Where-Object {
             $_.type -eq 'page' -and $_.webSocketDebuggerUrl -and $_.url -notmatch '^devtools://'
         }
     )
-    if ($pages.Count -eq 0) {
-        Write-Result "empty"
-        exit 0
-    }
+    if ($pages.Count -eq 0) { return "empty" }
     $ok = 0
     foreach ($page in $pages) {
         if (Refresh-Page ([string]$page.webSocketDebuggerUrl)) { $ok += 1 }
     }
-    if ($ok -lt 1) {
-        Write-Result "error The pages did not refresh."
+    if ($ok -lt 1) { return "fail" }
+    return "ok"
+}
+
+try {
+    Write-Result "working"
+    $cdp = Refresh-ViaCdp
+    if ($cdp -eq "ok") {
+        Write-Result "ok"
+        exit 0
+    }
+    if ($cdp -eq "empty" -and @(Get-LayoutHwnds).Count -lt 1) {
+        Write-Result "empty"
+        exit 0
+    }
+    if (Refresh-Hwnds) {
+        Write-Result "ok"
+        exit 0
+    }
+    if ($cdp -eq "down" -and @(Get-LayoutHwnds).Count -lt 1) {
+        Write-Result "error Edge is not open on those screens."
         exit 1
     }
-    Write-Result "ok"
-    exit 0
+    Write-Result "error The pages did not refresh."
+    exit 1
 } catch {
     $reason = $_.Exception.Message
     if (-not $reason) { $reason = "The pages did not refresh." }
