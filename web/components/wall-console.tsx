@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react"
 import { DragCoach } from "@/components/drag-coach"
+import { OnScreenKeyboard, TypeField, backspaceAtCaret, insertAtCaret, usePhysicalTyping } from "@/components/on-screen-keyboard"
 import { PresetCoach } from "@/components/preset-coach"
 import { Reveal, StatusLine, motionStyle, usePresence } from "@/components/presence"
 import { Slider } from "@/components/ui/slider"
@@ -192,6 +193,11 @@ export function WallConsole() {
   const [linkField, setLinkField] = useState<"name" | "url">("name")
   const [linkReplace, setLinkReplace] = useState(false)
   const [linkBusy, setLinkBusy] = useState(false)
+  const linkNameRef = useRef<HTMLInputElement | null>(null)
+  const linkUrlRef = useRef<HTMLInputElement | null>(null)
+  const linkCaret = useRef({ start: 0, end: 0 })
+  const addressInputRef = useRef<HTMLInputElement | null>(null)
+  const addressCaret = useRef({ start: 0, end: 0 })
   const [remoteAsk, setRemoteAsk] = useState<Computer | "">("")
   const remoteHold = useRef<Computer>("101")
   const [addresses, setAddresses] = useState<Record<string, string>>({})
@@ -735,44 +741,73 @@ export function WallConsole() {
   const addressValue = addressScreen ? addresses[addressScreen.id] ?? DEFAULT_URL : DEFAULT_URL
   const previewPending = footer.activeId !== "" && footer.activeId !== footer.appliedId
 
-  function insertAddress(token: string) {
+  function focusAddressInput(selectAll = false) {
+    const input = addressInputRef.current
+    if (!input) return
+    input.focus()
+    const end = input.value.length
+    if (selectAll) input.setSelectionRange(0, end)
+    else input.setSelectionRange(end, end)
+    addressCaret.current = {
+      start: input.selectionStart ?? end,
+      end: input.selectionEnd ?? end,
+    }
+  }
+
+  function readAddressCaret() {
+    const input = addressInputRef.current
+    if (!input) return addressCaret.current
+    return {
+      start: input.selectionStart ?? input.value.length,
+      end: input.selectionEnd ?? input.value.length,
+    }
+  }
+
+  function applyAddressEdit(next: { value: string; caret: number }) {
     if (!current) return
     const id = current.id
-    setAddresses((existing) => {
-      const value = existing[id] ?? DEFAULT_URL
-      const base = replaceAddress ? "" : value
-      return { ...existing, [id]: base + token }
-    })
+    setAddresses((existing) => ({ ...existing, [id]: next.value }))
     setReplaceAddress(false)
+    addressCaret.current = { start: next.caret, end: next.caret }
+    requestAnimationFrame(() => {
+      const input = addressInputRef.current
+      if (!input) return
+      input.focus()
+      input.setSelectionRange(next.caret, next.caret)
+    })
+  }
+
+  function insertAddress(token: string) {
+    if (!current) return
+    const value = addresses[current.id] ?? DEFAULT_URL
+    const caret = readAddressCaret()
+    applyAddressEdit(insertAtCaret(value, token, caret.start, caret.end, replaceAddress))
   }
 
   function insertScheme() {
     if (!current) return
-    const id = current.id
-    setAddresses((existing) => {
-      const value = existing[id] ?? DEFAULT_URL
-      if (replaceAddress || value.trim() === "") return { ...existing, [id]: "https://" }
-      if (/^https?:\/\//i.test(value)) return existing
-      return { ...existing, [id]: `https://${value}` }
-    })
-    setReplaceAddress(false)
+    const value = addresses[current.id] ?? DEFAULT_URL
+    if (replaceAddress || value.trim() === "") {
+      applyAddressEdit({ value: "https://", caret: "https://".length })
+      return
+    }
+    if (/^https?:\/\//i.test(value)) {
+      setReplaceAddress(false)
+      focusAddressInput()
+      return
+    }
+    applyAddressEdit({ value: `https://${value}`, caret: `https://${value}`.length })
   }
 
   function backspaceAddress() {
     if (!current) return
-    const id = current.id
-    setAddresses((existing) => {
-      const value = existing[id] ?? DEFAULT_URL
-      return { ...existing, [id]: replaceAddress ? "" : value.slice(0, -1) }
-    })
-    setReplaceAddress(false)
+    const value = addresses[current.id] ?? DEFAULT_URL
+    const caret = readAddressCaret()
+    applyAddressEdit(backspaceAtCaret(value, caret.start, caret.end, replaceAddress))
   }
 
   function clearAddress() {
-    if (!current) return
-    const id = current.id
-    setAddresses((existing) => ({ ...existing, [id]: "" }))
-    setReplaceAddress(false)
+    applyAddressEdit({ value: "", caret: 0 })
   }
 
   async function runAddress() {
@@ -1076,17 +1111,65 @@ export function WallConsole() {
     setLinkUrl("https://")
     setLinkField("name")
     setLinkReplace(false)
+    linkCaret.current = { start: 0, end: 0 }
     setLinkEditorOpen(true)
     setKeyboardOpen(false)
+    requestAnimationFrame(() => {
+      const input = linkNameRef.current
+      if (!input) return
+      input.focus()
+      input.setSelectionRange(0, 0)
+    })
+  }
+
+  function focusLinkField(field: "name" | "url", selectAll = false) {
+    setLinkField(field)
+    const input = field === "name" ? linkNameRef.current : linkUrlRef.current
+    if (!input) return
+    input.focus()
+    const end = input.value.length
+    if (selectAll) {
+      input.setSelectionRange(0, end)
+      setLinkReplace(true)
+    } else {
+      input.setSelectionRange(end, end)
+      setLinkReplace(false)
+    }
+    linkCaret.current = {
+      start: input.selectionStart ?? end,
+      end: input.selectionEnd ?? end,
+    }
+  }
+
+  function readLinkCaret() {
+    const input = linkField === "name" ? linkNameRef.current : linkUrlRef.current
+    if (!input) return linkCaret.current
+    return {
+      start: input.selectionStart ?? input.value.length,
+      end: input.selectionEnd ?? input.value.length,
+    }
+  }
+
+  function applyLinkEdit(next: { value: string; caret: number }) {
+    const field = linkField
+    const value = field === "name" ? next.value.slice(0, 40) : next.value
+    const caret = field === "name" ? Math.min(next.caret, value.length) : next.caret
+    if (field === "name") setLinkName(value)
+    else setLinkUrl(value)
+    setLinkReplace(false)
+    linkCaret.current = { start: caret, end: caret }
+    requestAnimationFrame(() => {
+      const input = field === "name" ? linkNameRef.current : linkUrlRef.current
+      if (!input) return
+      input.focus()
+      input.setSelectionRange(caret, caret)
+    })
   }
 
   function insertLinkToken(token: string) {
-    if (linkField === "name") {
-      setLinkName((value) => (linkReplace ? token : value + token).slice(0, 40))
-    } else {
-      setLinkUrl((value) => (linkReplace ? token : value + token))
-    }
-    setLinkReplace(false)
+    const value = linkField === "name" ? linkName : linkUrl
+    const caret = readLinkCaret()
+    applyLinkEdit(insertAtCaret(value, token, caret.start, caret.end, linkReplace))
   }
 
   function insertLinkScheme() {
@@ -1094,26 +1177,29 @@ export function WallConsole() {
       setLinkField("url")
       setLinkUrl("https://")
       setLinkReplace(false)
+      requestAnimationFrame(() => focusLinkField("url"))
       return
     }
-    setLinkUrl((value) => {
-      if (linkReplace || value.trim() === "") return "https://"
-      if (/^https?:\/\//i.test(value)) return value
-      return `https://${value}`
-    })
-    setLinkReplace(false)
+    if (linkReplace || linkUrl.trim() === "") {
+      applyLinkEdit({ value: "https://", caret: "https://".length })
+      return
+    }
+    if (/^https?:\/\//i.test(linkUrl)) {
+      setLinkReplace(false)
+      focusLinkField("url")
+      return
+    }
+    applyLinkEdit({ value: `https://${linkUrl}`, caret: `https://${linkUrl}`.length })
   }
 
   function backspaceLink() {
-    if (linkField === "name") setLinkName((value) => (linkReplace ? "" : value.slice(0, -1)))
-    else setLinkUrl((value) => (linkReplace ? "" : value.slice(0, -1)))
-    setLinkReplace(false)
+    const value = linkField === "name" ? linkName : linkUrl
+    const caret = readLinkCaret()
+    applyLinkEdit(backspaceAtCaret(value, caret.start, caret.end, linkReplace))
   }
 
   function clearLinkField() {
-    if (linkField === "name") setLinkName("")
-    else setLinkUrl("")
-    setLinkReplace(false)
+    applyLinkEdit({ value: "", caret: 0 })
   }
 
   async function saveLink() {
@@ -1168,6 +1254,19 @@ export function WallConsole() {
   const coachPin = armedPin ?? coachHold.current
   const coachPresence = usePresence(Boolean(armedPin) && !drag)
   const linkEditorPresence = usePresence(linkEditorOpen)
+  usePhysicalTyping(linkEditorOpen, {
+    onInsert: insertLinkToken,
+    onBackspace: backspaceLink,
+    onEnter: () => {
+      void saveLink()
+    },
+    onEscape: () => setLinkEditorOpen(false),
+  })
+  const addressScreenId = addressScreen?.id ?? ""
+  useEffect(() => {
+    if (!keyboardOpen || !addressScreenId) return
+    requestAnimationFrame(() => focusAddressInput(true))
+  }, [keyboardOpen, addressScreenId])
   const shownPreset = footer.presets.find((item) => item.id === footer.activeId)
   if (previewPending && shownPreset) presetCoachHold.current = { rows: footer.rows, preset: shownPreset }
   const presetCoach = presetCoachHold.current
@@ -1596,6 +1695,18 @@ export function WallConsole() {
           selected={replaceAddress}
           detail={zoneDetail(shownZone)}
           motionClass={keyboardPresence.visible ? "translate-y-0 opacity-100" : "translate-y-full opacity-0"}
+          inputRef={(node) => {
+            addressInputRef.current = node
+          }}
+          onValueChange={(value) => {
+            if (!addressScreen) return
+            setAddresses((existing) => ({ ...existing, [addressScreen.id]: value }))
+            setReplaceAddress(false)
+          }}
+          onCaret={(start, end) => {
+            addressCaret.current = { start, end }
+            if (start === end) setReplaceAddress(false)
+          }}
           onInsert={insertAddress}
           onScheme={insertScheme}
           onBackspace={backspaceAddress}
@@ -1661,62 +1772,63 @@ export function WallConsole() {
             <p id="link-editor-title" className="mt-1 text-2xl font-semibold tracking-wide">
               Save a site
             </p>
+            <p className="mt-2 text-xs text-cyan-100/70">Type on this keyboard, a physical keyboard, or paste with Ctrl+V.</p>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setLinkField("name")
-                  setLinkReplace(true)
+              <TypeField
+                label="SITE NAME"
+                value={linkName}
+                active={linkField === "name"}
+                maxLength={40}
+                inputRef={(node) => {
+                  linkNameRef.current = node
                 }}
-                className={`rounded-lg border px-3 py-3 text-left ${
-                  linkField === "name" ? "border-white bg-white/10" : "border-cyan-300/40 bg-[#08245f]/80"
-                }`}
-              >
-                <p className="text-[11px] tracking-[0.16em] text-cyan-100/70">SITE NAME</p>
-                <p className="mt-1 min-h-7 break-all text-base leading-7">{linkName || " "}</p>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setLinkField("url")
-                  setLinkReplace(true)
+                onFocus={() => setLinkField("name")}
+                onChange={(value) => {
+                  setLinkName(value.slice(0, 40))
+                  setLinkReplace(false)
                 }}
-                className={`rounded-lg border px-3 py-3 text-left ${
-                  linkField === "url" ? "border-white bg-white/10" : "border-cyan-300/40 bg-[#08245f]/80"
-                }`}
-              >
-                <p className="text-[11px] tracking-[0.16em] text-cyan-100/70">ADDRESS</p>
-                <p className="mt-1 min-h-7 break-all font-mono text-base leading-7">{linkUrl || " "}</p>
-              </button>
+                onCaret={(start, end) => {
+                  linkCaret.current = { start, end }
+                  if (start === end) setLinkReplace(false)
+                }}
+              />
+              <TypeField
+                label="ADDRESS"
+                value={linkUrl}
+                active={linkField === "url"}
+                mono
+                inputRef={(node) => {
+                  linkUrlRef.current = node
+                }}
+                onFocus={() => setLinkField("url")}
+                onChange={(value) => {
+                  setLinkUrl(value)
+                  setLinkReplace(false)
+                }}
+                onCaret={(start, end) => {
+                  linkCaret.current = { start, end }
+                  if (start === end) setLinkReplace(false)
+                }}
+              />
             </div>
             {linkReplace ? <p className="mt-2 text-xs text-cyan-100/70">The field is selected. The next key replaces it.</p> : null}
-            <div className="mt-3 flex flex-col gap-2 select-none">
-              {ADDRESS_KEYS.map((row) => (
-                <div key={row.join("")} className="flex gap-2">
-                  {row.map((key) => (
-                    <KeyButton key={key} onClick={() => insertLinkToken(key)}>
-                      {key}
-                    </KeyButton>
-                  ))}
-                </div>
-              ))}
-              <div className="flex gap-2">
-                {["https://", "www.", "/", ":", ".com", "?", "&", "=", "#", "%", " "].map((key) => (
-                  <KeyButton key={key} onClick={() => (key === "https://" ? insertLinkScheme() : insertLinkToken(key))}>
-                    {key === " " ? "space" : key}
-                  </KeyButton>
-                ))}
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <KeyButton onClick={clearLinkField}>Clear</KeyButton>
-                <KeyButton onClick={backspaceLink}>Backspace</KeyButton>
-              </div>
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <GlowButton onClick={() => setLinkEditorOpen(false)}>Cancel</GlowButton>
-              <GlowButton active onClick={() => void saveLink()}>
-                {linkBusy ? "Saving…" : "Save"}
-              </GlowButton>
+            <div className="mt-3">
+              <OnScreenKeyboard
+                showUrlShortcuts={linkField === "url"}
+                onInsert={insertLinkToken}
+                onBackspace={backspaceLink}
+                onClear={clearLinkField}
+                onScheme={insertLinkScheme}
+                onEnter={() => void saveLink()}
+                footer={
+                  <div className="mt-2 grid grid-cols-2 gap-3">
+                    <GlowButton onClick={() => setLinkEditorOpen(false)}>Cancel</GlowButton>
+                    <GlowButton active onClick={() => void saveLink()}>
+                      {linkBusy ? "Saving…" : "Save"}
+                    </GlowButton>
+                  </div>
+                }
+              />
             </div>
           </div>
         </div>
@@ -2170,18 +2282,14 @@ function PresetRow({
   )
 }
 
-const ADDRESS_KEYS = [
-  ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
-  ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
-  ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
-  ["z", "x", "c", "v", "b", "n", "m", ".", "-", "_"],
-]
-
 function AddressKeyboard({
   label,
   value,
   selected,
   detail,
+  inputRef,
+  onValueChange,
+  onCaret,
   onInsert,
   onScheme,
   onBackspace,
@@ -2194,6 +2302,9 @@ function AddressKeyboard({
   value: string
   selected: boolean
   detail: string
+  inputRef: (node: HTMLInputElement | null) => void
+  onValueChange: (value: string) => void
+  onCaret: (start: number, end: number) => void
   onInsert: (token: string) => void
   onScheme: () => void
   onBackspace: () => void
@@ -2202,11 +2313,16 @@ function AddressKeyboard({
   onClose: () => void
   motionClass: string
 }) {
-  const shortcuts = ["https://", "www.", "/", ":", ".com", "?", "&", "=", "#", "%"]
+  usePhysicalTyping(true, {
+    onInsert,
+    onBackspace,
+    onEnter: onOpen,
+    onEscape: onClose,
+  })
   return (
     <div
       data-keyboard
-      className={`fixed inset-x-0 bottom-0 z-40 max-h-[70vh] overflow-y-auto border-t border-cyan-300/40 bg-[#03102e]/95 px-24 py-3 shadow-[0_-12px_40px_rgba(0,0,0,0.45)] select-none ${motionClass}`}
+      className={`fixed inset-x-0 bottom-0 z-40 max-h-[74vh] overflow-y-auto border-t border-cyan-300/40 bg-[#03102e]/95 px-6 py-3 shadow-[0_-12px_40px_rgba(0,0,0,0.45)] sm:px-16 ${motionClass}`}
       style={motionStyle}
     >
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-2">
@@ -2214,54 +2330,46 @@ function AddressKeyboard({
           <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{label}</p>
           <p className="text-xs text-cyan-100/70">{detail}</p>
         </div>
-        <div className={`min-h-12 rounded-lg border px-3 py-2 ${selected ? "border-white bg-white/10" : "border-cyan-300/40 bg-[#08245f]/80"}`}>
-          <p className="break-all font-mono text-base leading-6">{value || " "}</p>
-        </div>
+        <p className="text-xs text-cyan-100/70">Type here, use a physical keyboard, or paste with Ctrl+V.</p>
+        <TypeField
+          label="ADDRESS"
+          value={value}
+          active
+          mono
+          inputRef={inputRef}
+          onFocus={() => {}}
+          onChange={onValueChange}
+          onCaret={onCaret}
+        />
         {selected ? <p className="text-xs text-cyan-100/70">The address is selected. The next key replaces it.</p> : null}
-        {ADDRESS_KEYS.map((row) => (
-          <div key={row.join("")} className="flex gap-2">
-            {row.map((key) => (
-              <KeyButton key={key} onClick={() => onInsert(key)}>
-                {key}
-              </KeyButton>
-            ))}
-          </div>
-        ))}
-        <div className="flex gap-2">
-          {shortcuts.map((key) => (
-            <KeyButton key={key} onClick={() => (key === "https://" ? onScheme() : onInsert(key))}>
-              {key}
-            </KeyButton>
-          ))}
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <KeyButton onClick={onClear}>Clear</KeyButton>
-          <KeyButton onClick={onBackspace}>Backspace</KeyButton>
-        </div>
-        <div className="grid grid-cols-[2fr_1fr] gap-2">
-          <button
-            type="button"
-            onClick={onOpen}
-            className="min-h-14 rounded-lg border border-cyan-200 bg-cyan-400/25 text-base tracking-wide shadow-[0_0_16px_rgba(80,200,255,0.35)]"
-          >
-            Open address
-          </button>
-          <KeyButton onClick={onClose}>Hide keyboard</KeyButton>
-        </div>
+        <OnScreenKeyboard
+          showUrlShortcuts
+          onInsert={onInsert}
+          onBackspace={onBackspace}
+          onClear={onClear}
+          onScheme={onScheme}
+          onEnter={onOpen}
+          footer={
+            <div className="mt-2 grid grid-cols-[2fr_1fr] gap-2">
+              <button
+                type="button"
+                onClick={onOpen}
+                className="min-h-14 rounded-lg border border-cyan-200 bg-cyan-400/25 text-base tracking-wide shadow-[0_0_16px_rgba(80,200,255,0.35)]"
+              >
+                Open address
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="min-h-14 rounded-lg border border-cyan-300/40 bg-[#0a2a6a] px-2 text-base tracking-wide touch-manipulation"
+              >
+                Hide keyboard
+              </button>
+            </div>
+          }
+        />
       </div>
     </div>
-  )
-}
-
-function KeyButton({ children, onClick }: { children: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="min-h-14 flex-1 rounded-lg border border-cyan-300/40 bg-[#08245f] px-2 text-lg tracking-wide touch-manipulation"
-    >
-      {children}
-    </button>
   )
 }
 
