@@ -740,6 +740,76 @@ export function WallConsole() {
     }
   }
 
+  async function refreshComputers(computers: Array<"101" | "102" | "103">, done: string) {
+    if (layoutBusy.current) return
+    layoutBusy.current = true
+    const where = computers.map((computer) => GROUP_LABEL[computer]).join(" and ")
+    setLayoutStatus(`Refreshing Edge on ${where}…`)
+    try {
+      const results = await Promise.all(
+        computers.map(async (computer) => {
+          const response = await fetch("/api/layout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ computer, preset: "refresh" }),
+          })
+          const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null
+          return { computer, ok: response.ok, text: body?.message || body?.error || "The pages did not refresh." }
+        }),
+      )
+      const failed = results.filter((item) => !item.ok)
+      setLayoutStatus(failed.length === 0 ? done : failed.map((item) => item.text).join(" "))
+    } catch {
+      setLayoutStatus("Could not reach the layout service.")
+    } finally {
+      layoutBusy.current = false
+    }
+  }
+
+  async function refreshSelectedEdge() {
+    if (selection.screen === "every") {
+      await refreshComputers(["101", "102", "103"], "Refreshed Edge on every screen.")
+      return
+    }
+    if (selection.screen === "all") {
+      if (panel === 1) await refreshComputers(["101"], "Refreshed Edge on screens 1–8.")
+      else await refreshComputers(["102", "103"], "Refreshed Edge on screens 9–18.")
+      return
+    }
+    if (selection.screen === "computer-2") {
+      await refreshComputers(["102"], "Refreshed Edge on screens 9–12 and 14–17.")
+      return
+    }
+    if (selection.screen === "computer-3") {
+      await refreshComputers(["103"], "Refreshed Edge on screens 13 and 18.")
+      return
+    }
+    const screenId = selection.screen
+    const computer = COMPUTER_OF[screenId]
+    if (!computer || layoutBusy.current) return
+    layoutBusy.current = true
+    const { zone } = zoneFor(screenId)
+    const label = zoneLabel(zone)
+    setLayoutStatus(`Refreshing Edge on ${label}…`)
+    try {
+      const response = await fetch("/api/layout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ computer, preset: "refresh", screen: screenId }),
+      })
+      const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null
+      if (!response.ok) {
+        setLayoutStatus(body?.error || "The pages did not refresh.")
+        return
+      }
+      setLayoutStatus(`Refreshed Edge on ${label}.`)
+    } catch {
+      setLayoutStatus("Could not reach the layout service.")
+    } finally {
+      layoutBusy.current = false
+    }
+  }
+
   async function controlWindow(action: "minimize" | "close") {
     try {
       const response = await fetch("/api/window", {
@@ -1797,6 +1867,9 @@ export function WallConsole() {
             else setPreset((currentPreset) => ({ ...currentPreset, 2: footer.appliedId }))
             setLayoutStatus(`Canceled the preview on ${footer.target}.`)
           }}
+          onRefresh={() => {
+            void refreshSelectedEdge()
+          }}
           onClose={() => {
             void closeSelectedEdge()
           }}
@@ -2684,6 +2757,7 @@ function PresetRow({
   onSelect,
   onConfirm,
   onCancel,
+  onRefresh,
   onClose,
   onCloseAll,
 }: {
@@ -2698,6 +2772,7 @@ function PresetRow({
   onSelect: (id: string) => void
   onConfirm: () => void
   onCancel: () => void
+  onRefresh: () => void
   onClose: () => void
   onCloseAll: () => void
 }) {
@@ -2721,6 +2796,7 @@ function PresetRow({
               <span>Create custom</span>
             </span>
           </GlowButton>
+          <GlowButton onClick={onRefresh}>Refresh</GlowButton>
           <GlowButton tone="alert" onClick={onClose}>
             Close Edge
           </GlowButton>

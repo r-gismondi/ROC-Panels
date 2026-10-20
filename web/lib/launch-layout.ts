@@ -580,6 +580,77 @@ export async function closeLayoutScreen(computer: string, screen: string): Promi
   return { ok: false, message: "Edge did not close." }
 }
 
+async function waitRefreshResult(
+  host: string,
+  resultFile: string,
+  okMessage: string,
+): Promise<LaunchResult> {
+  const started = Date.now()
+  let sawWorking = false
+  while (Date.now() - started < 20000) {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    let text = ""
+    try {
+      text = fs.readFileSync(resultFile, "utf8").trim()
+    } catch {
+      text = ""
+    }
+    if (!text) {
+      if (!sawWorking && Date.now() - started > 3000) {
+        return { ok: false, message: "Confirm a layout, then refresh the pages." }
+      }
+      continue
+    }
+    if (text === "working") {
+      sawWorking = true
+      continue
+    }
+    if (text === "ok") return { ok: true, message: okMessage }
+    if (text === "empty") return { ok: true, empty: true, message: "No Edge page is open there." }
+    if (text.startsWith("error ")) return { ok: false, message: text.slice(6) }
+    return { ok: false, message: "The pages did not refresh." }
+  }
+  return { ok: false, message: "The pages did not refresh." }
+}
+
+function writeRefreshRequest(computer: string, screen: string): { ok: true; host: string; resultFile: string } | { ok: false; message: string } {
+  const host = HOSTS[computer]
+  const screens = ADDRESS_SCREENS[computer]
+  if (!host || !screens) return { ok: false, message: "That computer is not on this wall." }
+  if (screen !== "ALL" && !screens.includes(screen)) return { ok: false, message: "That screen is not on this computer." }
+  const layout = readLayoutState()[computer]
+  if (!layout || layout === "close") return { ok: false, message: "Edge is not open on those screens." }
+  if (process.platform !== "win32") return { ok: false, message: "Run this page on the touchscreen." }
+  const root = path.join(layoutsRoot(host), `computer-${computer}`)
+  const requests = path.join(root, "refresh-requests")
+  const results = path.join(root, "refresh-results")
+  const resultFile = path.join(results, `${screen}.txt`)
+  const requestFile = path.join(requests, `${screen}.txt`)
+  try {
+    fs.mkdirSync(requests, { recursive: true })
+    fs.mkdirSync(results, { recursive: true })
+    fs.rmSync(resultFile, { force: true })
+    fs.writeFileSync(`${requestFile}.tmp`, "refresh", "utf8")
+    fs.renameSync(`${requestFile}.tmp`, requestFile)
+  } catch {
+    return { ok: false, message: `Could not reach the layout on ${host}.` }
+  }
+  return { ok: true, host, resultFile }
+}
+
+export async function refreshLayoutScreen(computer: string, screen: string): Promise<LaunchResult> {
+  const queued = writeRefreshRequest(computer, screen)
+  if (!queued.ok) return queued
+  const number = screen.replace("TV", "")
+  return waitRefreshResult(queued.host, queued.resultFile, `Refreshed Edge on screen ${number}.`)
+}
+
+export async function refreshLayout(computer: string): Promise<LaunchResult> {
+  const queued = writeRefreshRequest(computer, "ALL")
+  if (!queued.ok) return queued
+  return waitRefreshResult(queued.host, queued.resultFile, "Refreshed the open Edge pages.")
+}
+
 function computerForScreen(screen: string) {
   for (const [computer, screens] of Object.entries(ADDRESS_SCREENS)) {
     if (screens.includes(screen)) return computer

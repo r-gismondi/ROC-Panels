@@ -1,4 +1,4 @@
-import { closeLayoutScreen, launchLayout, readLayoutState } from "@/lib/launch-layout"
+import { closeLayoutScreen, launchLayout, readLayoutState, refreshLayout, refreshLayoutScreen } from "@/lib/launch-layout"
 import { NextResponse } from "next/server"
 
 export const runtime = "nodejs"
@@ -14,6 +14,14 @@ export async function POST(request: Request) {
   }
   if (body.preset === "close" && typeof body.screen === "string" && body.screen) {
     const result = await closeLayoutScreen(body.computer, body.screen)
+    if (!result.ok) return NextResponse.json({ error: result.message }, { status: 400 })
+    return NextResponse.json({ message: result.message, empty: Boolean(result.empty) })
+  }
+  if (body.preset === "refresh") {
+    const result =
+      typeof body.screen === "string" && body.screen
+        ? await refreshLayoutScreen(body.computer, body.screen)
+        : await refreshLayout(body.computer)
     if (!result.ok) return NextResponse.json({ error: result.message }, { status: 400 })
     return NextResponse.json({ message: result.message, empty: Boolean(result.empty) })
   }
