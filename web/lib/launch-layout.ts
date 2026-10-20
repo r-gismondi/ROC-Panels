@@ -4,7 +4,14 @@ import { promisify } from "util"
 import fs from "fs"
 import os from "os"
 import path from "path"
-import { customViewsFor, findCustomView, isCustomViewId, zonesForCustomView, type CustomView } from "@/lib/custom-views"
+import {
+  adaptCustomView,
+  customViewsFor,
+  findCustomView,
+  isCustomViewId,
+  zonesForCustomView,
+  type CustomView,
+} from "@/lib/custom-views"
 import { installRoot, scriptsDir } from "@/lib/install-root"
 import type { ZoneSpec } from "@/lib/screen-geometry"
 
@@ -60,15 +67,16 @@ function storedAllowed(computer: string) {
 export function layoutCommand(computer: string, preset: string): LayoutCommand | null {
   const host = HOSTS[computer]
   if (!host) return null
-  if (isCustomViewId(preset)) {
+  if (isCustomViewId(preset) && (computer === "101" || computer === "102" || computer === "103")) {
     const view = findCustomView(preset)
-    if (!view || view.computer !== computer) return null
+    const adapted = view ? adaptCustomView(view, computer) : null
+    if (!adapted) return null
     return {
       host,
       bat: BATS.custom,
       path: `C:\\layouts\\computer-${computer}\\${BATS.custom}`,
-      label: view.name,
-      customView: view,
+      label: adapted.name,
+      customView: adapted,
     }
   }
   const allowed = builtinAllowed(computer)

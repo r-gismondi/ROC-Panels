@@ -2,9 +2,11 @@ import crypto from "crypto"
 import fs from "fs"
 import path from "path"
 import {
-  CUSTOM_VIEW_SCREENS,
+  adaptCustomView,
+  canApplyCustomView,
   groupsFromBuckets,
   isCustomViewId,
+  panelFamily,
   validateViewBuckets,
   type CustomView,
 } from "@/lib/custom-view-model"
@@ -12,7 +14,7 @@ import { installRoot } from "@/lib/install-root"
 import { zonesFromGroups, type ZoneSpec } from "@/lib/screen-geometry"
 
 export type { CustomView }
-export { groupsFromBuckets, isCustomViewId, CUSTOM_VIEW_SCREENS as screenIdsFor }
+export { adaptCustomView, canApplyCustomView, groupsFromBuckets, isCustomViewId, panelFamily }
 
 function viewsFile() {
   return path.join(installRoot(), "custom-views.json")
@@ -48,7 +50,9 @@ function writeCustomViews(views: CustomView[]) {
 }
 
 export function customViewsFor(computer: "101" | "102" | "103") {
-  return readCustomViews().filter((view) => view.computer === computer)
+  return readCustomViews()
+    .filter((view) => canApplyCustomView(view, computer))
+    .map((view) => adaptCustomView(view, computer)!)
 }
 
 export function findCustomView(id: string) {
@@ -65,7 +69,8 @@ export function addCustomView(
   const checked = validateViewBuckets(computer, buckets)
   if (!checked.ok) return checked
   const views = readCustomViews()
-  if (views.filter((view) => view.computer === computer).length >= 12) {
+  const family = panelFamily(computer)
+  if (views.filter((view) => panelFamily(view.computer) === family).length >= 12) {
     return { ok: false, message: "Remove a custom view before adding another." }
   }
   const view: CustomView = {
