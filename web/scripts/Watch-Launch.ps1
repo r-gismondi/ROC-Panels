@@ -91,7 +91,7 @@ while ($true) {
             continue
         }
         $work = Split-Path -Parent $bat
-        if ($bat -like "*Edge-Close.bat") {
+        if ($bat -like "*Edge-Close.bat" -or $bat -like "*Refresh-*.bat") {
             try {
                 $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $bat -WorkingDirectory $work -WindowStyle Hidden -PassThru
                 while ($proc -and -not $proc.HasExited) {
