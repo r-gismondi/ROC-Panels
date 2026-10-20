@@ -4,7 +4,9 @@ import { promisify } from "util"
 import fs from "fs"
 import os from "os"
 import path from "path"
+import { customViewsFor, findCustomView, isCustomViewId, zonesForCustomView, type CustomView } from "@/lib/custom-views"
 import { installRoot, scriptsDir } from "@/lib/install-root"
+import type { ZoneSpec } from "@/lib/screen-geometry"
 
 const execFileAsync = promisify(execFile)
 
@@ -27,6 +29,7 @@ const BATS: Record<string, string> = {
   "focus-split": "Edge-Focus-Split.bat",
   full: "Edge-Full.bat",
   close: "Edge-Close.bat",
+  custom: "Edge-Custom.bat",
 }
 
 const ALLOWED: Record<string, string[]> = {
@@ -37,11 +40,40 @@ const ALLOWED: Record<string, string[]> = {
 
 export type LaunchResult = { ok: true; message: string; empty?: boolean } | { ok: false; message: string }
 
-export function layoutCommand(computer: string, preset: string) {
+type LayoutCommand = {
+  host: string
+  bat: string
+  path: string
+  label: string
+  customView?: CustomView
+}
+
+function builtinAllowed(computer: string) {
+  return ALLOWED[computer] ?? []
+}
+
+function storedAllowed(computer: string) {
+  if (computer !== "101" && computer !== "102" && computer !== "103") return builtinAllowed(computer)
+  return [...builtinAllowed(computer), ...customViewsFor(computer).map((view) => view.id)]
+}
+
+export function layoutCommand(computer: string, preset: string): LayoutCommand | null {
   const host = HOSTS[computer]
-  const allowed = ALLOWED[computer]
+  if (!host) return null
+  if (isCustomViewId(preset)) {
+    const view = findCustomView(preset)
+    if (!view || view.computer !== computer) return null
+    return {
+      host,
+      bat: BATS.custom,
+      path: `C:\\layouts\\computer-${computer}\\${BATS.custom}`,
+      label: view.name,
+      customView: view,
+    }
+  }
+  const allowed = builtinAllowed(computer)
   const bat = BATS[preset]
-  if (!host || !allowed || !bat || !allowed.includes(preset)) return null
+  if (!bat || !allowed.includes(preset)) return null
   const label = preset === "close" ? "Close" : preset === "focus-split" ? "Focus split" : preset.charAt(0).toUpperCase() + preset.slice(1)
   return { host, bat, path: `C:\\layouts\\computer-${computer}\\${bat}`, label }
 }
@@ -147,21 +179,40 @@ async function waitUntilGone(file: string, timeoutMs: number) {
   return !fs.existsSync(file)
 }
 
-function publishLayoutScript(host: string, computer: string) {
-  const source = path.join(installRoot(), "layouts", `computer-${computer}`, "Show-Edge.ps1")
+function publishLayoutFile(host: string, computer: string, name: string) {
+  const source = path.join(installRoot(), "layouts", `computer-${computer}`, name)
   if (!fs.existsSync(source)) return
   const destDir = path.join(layoutsRoot(host), `computer-${computer}`)
-  const dest = path.join(destDir, "Show-Edge.ps1")
+  const dest = path.join(destDir, name)
   const next = fs.readFileSync(source)
   try {
     if (fs.readFileSync(dest).equals(next)) return
   } catch {
-    // The computer does not have this layout script yet.
+    // The computer does not have this layout file yet.
   }
   fs.mkdirSync(destDir, { recursive: true })
   const temporary = `${dest}.${process.pid}.tmp`
   fs.writeFileSync(temporary, next)
   fs.renameSync(temporary, dest)
+}
+
+function publishLayoutScript(host: string, computer: string) {
+  publishLayoutFile(host, computer, "Show-Edge.ps1")
+  publishLayoutFile(host, computer, "Edge-Custom.bat")
+}
+
+function publishCustomZones(host: string, computer: string, zones: ZoneSpec[]) {
+  const destDir = path.join(layoutsRoot(host), `computer-${computer}`)
+  fs.mkdirSync(destDir, { recursive: true })
+  const dest = path.join(destDir, "custom-zones.json")
+  const temporary = `${dest}.${process.pid}.tmp`
+  fs.writeFileSync(temporary, JSON.stringify(zones), "utf8")
+  try {
+    fs.renameSync(temporary, dest)
+  } catch {
+    fs.rmSync(dest, { force: true })
+    fs.renameSync(temporary, dest)
+  }
 }
 
 function publishWatcher(host: string) {
@@ -320,15 +371,15 @@ function readPresetFile(file: string, allowed: string[]) {
 }
 
 function rememberLayout(computer: string, preset: string) {
-  const allowed = ALLOWED[computer]
-  if (!allowed?.includes(preset) || preset === "close") return
+  if (preset === "close") return
+  if (!storedAllowed(computer).includes(preset)) return
   writePresetFile(layoutStateFile(computer), preset)
 }
 
 export function readLayoutState() {
   const layouts: Record<string, string> = { "101": "", "102": "", "103": "" }
   for (const computer of Object.keys(layouts)) {
-    const allowed = ALLOWED[computer] ?? []
+    const allowed = storedAllowed(computer)
     const current = readPresetFile(layoutStateFile(computer), allowed)
     const legacy = current ? "" : readPresetFile(legacyLayoutStateFile(computer), allowed)
     const saved = current || legacy
@@ -347,7 +398,7 @@ export function readLayoutState() {
 
 export async function launchLayout(computer: string, preset: string): Promise<LaunchResult> {
   const command = layoutCommand(computer, preset)
-    if (!command) return { ok: false, message: "That preset is not on these screens." }
+  if (!command) return { ok: false, message: "That preset is not on these screens." }
   if (process.platform !== "win32") {
     return {
       ok: false,
@@ -355,6 +406,7 @@ export async function launchLayout(computer: string, preset: string): Promise<La
     }
   }
   publishLayoutScript(command.host, computer)
+  if (command.customView) publishCustomZones(command.host, computer, zonesForCustomView(command.customView))
   const account = layoutAccount()
   const user = account.user
   const password = account.password
