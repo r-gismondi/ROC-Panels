@@ -11,6 +11,8 @@ import { GROUP_COLOR, presetZones, type Preset, type Screen } from "@/lib/preset
 type PanelId = 1 | 2
 
 type PinnedApp = { id: string; name: string; path: string; locked?: boolean }
+type SavedLink = { id: string; name: string; url: string }
+type DragItem = { kind: "program" | "link"; id: string; x: number; y: number; over: string }
 
 const C_CONNECT_PIN: PinnedApp = { id: C_CONNECT_ID, name: C_CONNECT_NAME, path: C_CONNECT_URL, locked: true }
 
@@ -178,9 +180,18 @@ export function WallConsole() {
   const [brightness, setBrightness] = useState<Record<string, number>>(initialBrightness)
   const [layoutStatus, setLayoutStatus] = useState("Preset buttons preview the layout here. Confirm opens Edge on these screens.")
   const [pins, setPins] = useState<PinnedApp[]>([C_CONNECT_PIN])
+  const [links, setLinks] = useState<SavedLink[]>([])
   const [armedApp, setArmedApp] = useState("")
+  const [armedLink, setArmedLink] = useState("")
   const [programStatus, setProgramStatus] = useState("")
+  const [linkStatus, setLinkStatus] = useState("")
   const [browseBusy, setBrowseBusy] = useState(false)
+  const [linkEditorOpen, setLinkEditorOpen] = useState(false)
+  const [linkName, setLinkName] = useState("")
+  const [linkUrl, setLinkUrl] = useState("")
+  const [linkField, setLinkField] = useState<"name" | "url">("name")
+  const [linkReplace, setLinkReplace] = useState(false)
+  const [linkBusy, setLinkBusy] = useState(false)
   const [remoteAsk, setRemoteAsk] = useState<Computer | "">("")
   const remoteHold = useRef<Computer>("101")
   const [addresses, setAddresses] = useState<Record<string, string>>({})
@@ -192,10 +203,12 @@ export function WallConsole() {
   const brightnessDraft = useRef<number | null>(null)
   const screenHold = useRef<Screen | undefined>(undefined)
   const coachHold = useRef<PinnedApp | null>(null)
-  const dragSession = useRef<{ pointerId: number; id: string; x: number; y: number; dragging: boolean } | null>(null)
-  const [drag, setDrag] = useState<{ id: string; x: number; y: number; over: string } | null>(null)
+  const dragSession = useRef<{ pointerId: number; kind: "program" | "link"; id: string; x: number; y: number; dragging: boolean } | null>(null)
+  const [drag, setDrag] = useState<DragItem | null>(null)
   const armedRef = useRef("")
+  const armedLinkRef = useRef("")
   const launchPin = useRef("")
+  const launchLinkId = useRef("")
   const scrollArea = useRef<HTMLDivElement>(null)
   const presetCoachHold = useRef<{ rows: Screen[][]; preset: Preset } | null>(null)
 
@@ -209,6 +222,7 @@ export function WallConsole() {
     events.onmessage = (event) => {
       if (event.data !== "home") return
       setKeyboardOpen(false)
+      setLinkEditorOpen(false)
       setRemoteAsk("")
       scrollArea.current?.scrollTo({ top: 0, behavior: "smooth" })
     }
@@ -227,15 +241,32 @@ export function WallConsole() {
   }, [keyboardOpen])
 
   useEffect(() => {
-    if (!armedApp) return
+    if (!armedApp && !armedLink) return
     function cancelArmed(event: PointerEvent) {
       const target = event.target
-      if (target instanceof Element && (target.closest("[data-screen-id]") || target.closest("[data-program-id]"))) return
+      if (
+        target instanceof Element &&
+        (target.closest("[data-screen-id]") || target.closest("[data-program-id]") || target.closest("[data-link-id]"))
+      ) {
+        return
+      }
       setArmedApp("")
+      setArmedLink("")
     }
     window.addEventListener("pointerdown", cancelArmed)
     return () => window.removeEventListener("pointerdown", cancelArmed)
-  }, [armedApp])
+  }, [armedApp, armedLink])
+
+  useEffect(() => {
+    if (!linkEditorOpen) return
+    function closeEditor(event: PointerEvent) {
+      const target = event.target
+      if (target instanceof Element && target.closest("[data-link-editor]")) return
+      setLinkEditorOpen(false)
+    }
+    window.addEventListener("pointerdown", closeEditor, true)
+    return () => window.removeEventListener("pointerdown", closeEditor, true)
+  }, [linkEditorOpen])
 
   useEffect(() => {
     return () => {
@@ -336,6 +367,22 @@ export function WallConsole() {
         if (!cancel && body.pins) setPins(withCConnect(body.pins))
       } catch {
         // The shelf stays empty until a program is added.
+      }
+    })()
+    return () => {
+      cancel = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancel = false
+    void (async () => {
+      try {
+        const response = await fetch("/api/links")
+        const body = (await response.json()) as { links?: SavedLink[] }
+        if (!cancel && body.links) setLinks(body.links)
+      } catch {
+        // The shelf stays empty until a site is saved.
       }
     })()
     return () => {
@@ -651,8 +698,9 @@ export function WallConsole() {
   }
 
   function askRemote(computer: Computer) {
-    if (armedApp) {
+    if (armedApp || armedLink) {
       setArmedApp("")
+      setArmedLink("")
       return
     }
     setRemoteAsk(computer)
@@ -762,13 +810,18 @@ export function WallConsole() {
 
   function pressScreen() {
     launchPin.current = armedRef.current
+    launchLinkId.current = armedLinkRef.current
   }
 
   function choose(next: Selection) {
     setSelection(next)
     const pin = launchPin.current
+    const linkId = launchLinkId.current
     launchPin.current = ""
-    if (/^TV\d+$/.test(next.screen) && pin) void openProgram(pin, next.screen)
+    launchLinkId.current = ""
+    if (!/^TV\d+$/.test(next.screen)) return
+    if (pin) void openProgram(pin, next.screen)
+    else if (linkId) void openSavedLink(linkId, next.screen)
   }
 
   function rememberApplied(computer: "101" | "102" | "103", id: string) {
@@ -797,6 +850,16 @@ export function WallConsole() {
     }
   }
 
+  function zoneForScreen(screenId: string, layoutId: string) {
+    const computer = COMPUTER_OF[screenId]
+    if (!computer) return [screenId]
+    const list = computer === "103" ? COMPUTER_3_PRESETS : computer === "101" ? PRESETS[1] : PRESETS[2]
+    const active = list.find((item) => item.id === layoutId)
+    const ids = computer === "103" ? COMPUTER_3_IDS : computer === "101" ? IDS[1] : COMPUTER_2_IDS
+    const group = active?.groups[screenId]
+    return active ? ids.filter((id) => active.groups[id] === group) : [screenId]
+  }
+
   async function openProgram(pinId: string, screenId: string) {
     const pin = pins.find((item) => item.id === pinId)
     if (!pin) return
@@ -808,11 +871,7 @@ export function WallConsole() {
     }
     launchLock.current = true
     const layoutId = await runningLayout(computer)
-    const list = computer === "103" ? COMPUTER_3_PRESETS : computer === "101" ? PRESETS[1] : PRESETS[2]
-    const active = list.find((item) => item.id === layoutId)
-    const ids = computer === "103" ? COMPUTER_3_IDS : computer === "101" ? IDS[1] : COMPUTER_2_IDS
-    const group = active?.groups[screenId]
-    const zone = active ? ids.filter((id) => active.groups[id] === group) : [screenId]
+    const zone = zoneForScreen(screenId, layoutId)
     const label = zone.length > 1 ? `screens ${zone.map(screenNumber).join(", ")}` : `screen ${screenNumber(screenId)}`
     const opening = `Opening ${pin.name} on ${label}…`
     setProgramStatus(opening)
@@ -841,9 +900,58 @@ export function WallConsole() {
         })
       }
       setArmedApp("")
+      setArmedLink("")
     } catch {
       const note = "Could not reach the layout service."
       setProgramStatus(note)
+      setLayoutStatus(note)
+    } finally {
+      launchLock.current = false
+    }
+  }
+
+  async function openSavedLink(linkId: string, screenId: string) {
+    const link = links.find((item) => item.id === linkId)
+    if (!link) return
+    const computer = COMPUTER_OF[screenId]
+    if (!computer) return
+    if (launchLock.current || layoutBusy.current) {
+      setLinkStatus("Wait for the layout to finish opening.")
+      return
+    }
+    launchLock.current = true
+    const layoutId = await runningLayout(computer)
+    const zone = zoneForScreen(screenId, layoutId)
+    const label = zone.length > 1 ? `screens ${zone.map(screenNumber).join(", ")}` : `screen ${screenNumber(screenId)}`
+    const opening = `Opening ${link.name} on ${label}…`
+    setLinkStatus(opening)
+    setLayoutStatus(opening)
+    try {
+      const response = await fetch("/api/links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "launch", id: link.id, screen: screenId }),
+      })
+      const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null
+      if (!response.ok) {
+        const note = body?.error || "The site did not open."
+        setLinkStatus(note)
+        setLayoutStatus(note)
+        return
+      }
+      const note = `Opened ${link.name} on ${label}.`
+      setLinkStatus(note)
+      setLayoutStatus(note)
+      setAddresses((existing) => {
+        const next = { ...existing }
+        for (const id of zone) next[id] = link.url
+        return next
+      })
+      setArmedApp("")
+      setArmedLink("")
+    } catch {
+      const note = "Could not reach the layout service."
+      setLinkStatus(note)
       setLayoutStatus(note)
     } finally {
       launchLock.current = false
@@ -858,12 +966,12 @@ export function WallConsole() {
     return ""
   }
 
-  function programPointer(pinId: string) {
+  function shelfPointer(kind: "program" | "link", itemId: string) {
     return {
       onPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
         if (event.button !== 0) return
         event.preventDefault()
-        dragSession.current = { pointerId: event.pointerId, id: pinId, x: event.clientX, y: event.clientY, dragging: false }
+        dragSession.current = { pointerId: event.pointerId, kind, id: itemId, x: event.clientX, y: event.clientY, dragging: false }
         event.currentTarget.setPointerCapture(event.pointerId)
       },
       onPointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
@@ -873,15 +981,22 @@ export function WallConsole() {
         const dy = event.clientY - session.y
         if (!session.dragging && dx * dx + dy * dy < 36) return
         session.dragging = true
-        setDrag({ id: session.id, x: event.clientX, y: event.clientY, over: screenUnder(event.clientX, event.clientY) })
+        setDrag({ kind: session.kind, id: session.id, x: event.clientX, y: event.clientY, over: screenUnder(event.clientX, event.clientY) })
       },
       onPointerUp(event: ReactPointerEvent<HTMLButtonElement>) {
         const session = dragSession.current
         if (!session || session.pointerId !== event.pointerId) return
         dragSession.current = null
         if (!session.dragging) {
-          setProgramStatus("")
-          setArmedApp((currentId) => (currentId === pinId ? "" : pinId))
+          if (kind === "program") {
+            setProgramStatus("")
+            setArmedLink("")
+            setArmedApp((currentId) => (currentId === itemId ? "" : itemId))
+          } else {
+            setLinkStatus("")
+            setArmedApp("")
+            setArmedLink((currentId) => (currentId === itemId ? "" : itemId))
+          }
           setDrag(null)
           return
         }
@@ -889,7 +1004,8 @@ export function WallConsole() {
         setDrag(null)
         if (!screenId) return
         setSelection({ panel: COMPUTER_OF[screenId] === "101" ? 1 : 2, screen: screenId })
-        void openProgram(pinId, screenId)
+        if (kind === "program") void openProgram(itemId, screenId)
+        else void openSavedLink(itemId, screenId)
       },
       onPointerCancel() {
         dragSession.current = null
@@ -898,10 +1014,20 @@ export function WallConsole() {
     }
   }
 
+  function programPointer(pinId: string) {
+    return shelfPointer("program", pinId)
+  }
+
+  function linkPointer(linkId: string) {
+    return shelfPointer("link", linkId)
+  }
+
   async function browseProgram() {
     if (browseBusy) return
     setBrowseBusy(true)
     setProgramStatus("")
+    setArmedLink("")
+    setLinkEditorOpen(false)
     setLayoutStatus("Choose a program.")
     try {
       const response = await fetch("/api/apps", {
@@ -915,7 +1041,10 @@ export function WallConsole() {
         return
       }
       setPins(withCConnect(body.pins))
-      if (body.selectedId) setArmedApp(body.selectedId)
+      if (body.selectedId) {
+        setArmedApp(body.selectedId)
+        setArmedLink("")
+      }
       setLayoutStatus(body.canceled ? "No program was added." : "Tap a screen, or drag the program onto it.")
     } catch {
       setLayoutStatus("Could not reach the layout service.")
@@ -939,11 +1068,106 @@ export function WallConsole() {
     }
   }
 
+  function openLinkEditor() {
+    setArmedApp("")
+    setArmedLink("")
+    setLinkStatus("")
+    setLinkName("")
+    setLinkUrl("https://")
+    setLinkField("name")
+    setLinkReplace(false)
+    setLinkEditorOpen(true)
+    setKeyboardOpen(false)
+  }
+
+  function insertLinkToken(token: string) {
+    if (linkField === "name") {
+      setLinkName((value) => (linkReplace ? token : value + token).slice(0, 40))
+    } else {
+      setLinkUrl((value) => (linkReplace ? token : value + token))
+    }
+    setLinkReplace(false)
+  }
+
+  function insertLinkScheme() {
+    if (linkField !== "url") {
+      setLinkField("url")
+      setLinkUrl("https://")
+      setLinkReplace(false)
+      return
+    }
+    setLinkUrl((value) => {
+      if (linkReplace || value.trim() === "") return "https://"
+      if (/^https?:\/\//i.test(value)) return value
+      return `https://${value}`
+    })
+    setLinkReplace(false)
+  }
+
+  function backspaceLink() {
+    if (linkField === "name") setLinkName((value) => (linkReplace ? "" : value.slice(0, -1)))
+    else setLinkUrl((value) => (linkReplace ? "" : value.slice(0, -1)))
+    setLinkReplace(false)
+  }
+
+  function clearLinkField() {
+    if (linkField === "name") setLinkName("")
+    else setLinkUrl("")
+    setLinkReplace(false)
+  }
+
+  async function saveLink() {
+    if (linkBusy) return
+    setLinkBusy(true)
+    setLinkStatus("")
+    try {
+      const response = await fetch("/api/links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "add", name: linkName, url: linkUrl }),
+      })
+      const body = (await response.json().catch(() => null)) as { links?: SavedLink[]; selectedId?: string; error?: string } | null
+      if (!response.ok || !body?.links) {
+        setLinkStatus(body?.error || "The site could not be saved.")
+        return
+      }
+      setLinks(body.links)
+      setLinkEditorOpen(false)
+      if (body.selectedId) {
+        setArmedApp("")
+        setArmedLink(body.selectedId)
+      }
+      setLinkStatus("Tap a screen, or drag the site onto it.")
+      setLayoutStatus("Tap a screen, or drag the site onto it.")
+    } catch {
+      setLinkStatus("Could not reach the layout service.")
+    } finally {
+      setLinkBusy(false)
+    }
+  }
+
+  async function removeSavedLink(id: string) {
+    if (armedLink === id) setArmedLink("")
+    try {
+      const response = await fetch("/api/links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "remove", id }),
+      })
+      const body = (await response.json().catch(() => null)) as { links?: SavedLink[] } | null
+      if (body?.links) setLinks(body.links)
+    } catch {
+      setLayoutStatus("Could not reach the layout service.")
+    }
+  }
+
   armedRef.current = armedApp
+  armedLinkRef.current = armedLink
   const armedPin = pins.find((pin) => pin.id === armedApp) ?? null
   if (armedPin) coachHold.current = armedPin
   const coachPin = armedPin ?? coachHold.current
   const coachPresence = usePresence(Boolean(armedPin) && !drag)
+  const linkEditorPresence = usePresence(linkEditorOpen)
   const shownPreset = footer.presets.find((item) => item.id === footer.activeId)
   if (previewPending && shownPreset) presetCoachHold.current = { rows: footer.rows, preset: shownPreset }
   const presetCoach = presetCoachHold.current
@@ -1056,6 +1280,7 @@ export function WallConsole() {
                       type="button"
                       data-typeable
                       onClick={() => {
+                        setLinkEditorOpen(false)
                         setKeyboardOpen(true)
                         setReplaceAddress(true)
                       }}
@@ -1288,18 +1513,78 @@ export function WallConsole() {
           ) : null}
         </div>
       </section>
+      <section className="shrink-0 border-t border-cyan-300/30 px-4 py-3 sm:px-6">
+        <div className="mb-2">
+          <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">WEB ADDRESSES</p>
+          <StatusLine
+            text={
+              linkStatus
+                ? linkStatus
+                : armedLink
+                  ? "Tap a screen to open it there. Tap anywhere else to cancel."
+                  : "Add a site name and address, then tap a screen or drag it onto one."
+            }
+            className="line-clamp-2 min-h-10 text-xs leading-5 text-cyan-100/80"
+          />
+        </div>
+        <div className="flex items-stretch gap-2 overflow-x-auto overflow-y-hidden pb-1">
+          <GlowButton active={linkEditorOpen} onClick={openLinkEditor}>
+            Add site
+          </GlowButton>
+          {links.map((link) => (
+            <div key={link.id} className="flex shrink-0">
+              <button
+                type="button"
+                data-link-id={link.id}
+                {...linkPointer(link.id)}
+                className={`flex min-h-11 max-w-56 cursor-grab touch-none items-center gap-2 rounded-l-lg border border-r-0 px-3 text-sm tracking-wide select-none active:cursor-grabbing ${
+                  armedLink === link.id
+                    ? "border-cyan-200 bg-cyan-400/25 shadow-[0_0_16px_rgba(80,200,255,0.35)]"
+                    : "border-cyan-300/35 bg-[#08245f]/80"
+                }`}
+              >
+                <LinkGlyph />
+                <span className="min-w-0 truncate">{link.name}</span>
+              </button>
+              <button
+                type="button"
+                aria-label={`Remove ${link.name}`}
+                onClick={() => void removeSavedLink(link.id)}
+                className={`min-h-11 rounded-r-lg border px-3 text-sm ${
+                  armedLink === link.id ? "border-cyan-200 bg-cyan-400/25" : "border-cyan-300/35 bg-[#08245f]/80"
+                }`}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      </section>
       </div>
       {drag
         ? (() => {
-            const pin = pins.find((item) => item.id === drag.id)
-            if (!pin) return null
+            if (drag.kind === "program") {
+              const pin = pins.find((item) => item.id === drag.id)
+              if (!pin) return null
+              return (
+                <div
+                  className="pointer-events-none fixed z-50 flex max-w-56 -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-lg border border-cyan-200 bg-cyan-400/30 px-3 py-2 text-sm shadow-[0_12px_30px_rgba(0,0,0,0.45)]"
+                  style={{ left: drag.x, top: drag.y }}
+                >
+                  <ProgramIcon id={pin.id} />
+                  <span className="truncate">{pin.name}</span>
+                </div>
+              )
+            }
+            const link = links.find((item) => item.id === drag.id)
+            if (!link) return null
             return (
               <div
                 className="pointer-events-none fixed z-50 flex max-w-56 -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-lg border border-cyan-200 bg-cyan-400/30 px-3 py-2 text-sm shadow-[0_12px_30px_rgba(0,0,0,0.45)]"
                 style={{ left: drag.x, top: drag.y }}
               >
-                <ProgramIcon id={pin.id} />
-                <span className="truncate">{pin.name}</span>
+                <LinkGlyph />
+                <span className="truncate">{link.name}</span>
               </div>
             )
           })()
@@ -1354,6 +1639,83 @@ export function WallConsole() {
               <GlowButton onClick={() => setRemoteAsk("")}>No</GlowButton>
               <GlowButton active onClick={() => void runRemote(remoteComputer)}>
                 Yes
+              </GlowButton>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {linkEditorPresence.mounted ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="link-editor-title"
+          className={`fixed inset-0 z-50 flex items-end justify-center bg-[#03102e]/60 backdrop-blur-[2px] sm:items-center ${linkEditorPresence.visible ? "opacity-100" : "opacity-0"} ${linkEditorOpen ? "" : "pointer-events-none"}`}
+          style={motionStyle}
+        >
+          <div
+            data-link-editor
+            className={`flex max-h-[92vh] w-[min(56rem,96vw)] flex-col overflow-y-auto rounded-t-2xl border border-cyan-300/80 bg-[#071a4d] px-5 py-5 shadow-[0_0_40px_rgba(80,200,255,0.25)] sm:rounded-2xl sm:px-8 sm:py-7 ${linkEditorPresence.visible ? "translate-y-0 scale-100" : "translate-y-4 scale-95"}`}
+            style={motionStyle}
+          >
+            <p className="text-[11px] tracking-[0.18em] text-cyan-100/70">WEB ADDRESSES</p>
+            <p id="link-editor-title" className="mt-1 text-2xl font-semibold tracking-wide">
+              Save a site
+            </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setLinkField("name")
+                  setLinkReplace(true)
+                }}
+                className={`rounded-lg border px-3 py-3 text-left ${
+                  linkField === "name" ? "border-white bg-white/10" : "border-cyan-300/40 bg-[#08245f]/80"
+                }`}
+              >
+                <p className="text-[11px] tracking-[0.16em] text-cyan-100/70">SITE NAME</p>
+                <p className="mt-1 min-h-7 break-all text-base leading-7">{linkName || " "}</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLinkField("url")
+                  setLinkReplace(true)
+                }}
+                className={`rounded-lg border px-3 py-3 text-left ${
+                  linkField === "url" ? "border-white bg-white/10" : "border-cyan-300/40 bg-[#08245f]/80"
+                }`}
+              >
+                <p className="text-[11px] tracking-[0.16em] text-cyan-100/70">ADDRESS</p>
+                <p className="mt-1 min-h-7 break-all font-mono text-base leading-7">{linkUrl || " "}</p>
+              </button>
+            </div>
+            {linkReplace ? <p className="mt-2 text-xs text-cyan-100/70">The field is selected. The next key replaces it.</p> : null}
+            <div className="mt-3 flex flex-col gap-2 select-none">
+              {ADDRESS_KEYS.map((row) => (
+                <div key={row.join("")} className="flex gap-2">
+                  {row.map((key) => (
+                    <KeyButton key={key} onClick={() => insertLinkToken(key)}>
+                      {key}
+                    </KeyButton>
+                  ))}
+                </div>
+              ))}
+              <div className="flex gap-2">
+                {["https://", "www.", "/", ":", ".com", "?", "&", "=", "#", "%", " "].map((key) => (
+                  <KeyButton key={key} onClick={() => (key === "https://" ? insertLinkScheme() : insertLinkToken(key))}>
+                    {key === " " ? "space" : key}
+                  </KeyButton>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <KeyButton onClick={clearLinkField}>Clear</KeyButton>
+                <KeyButton onClick={backspaceLink}>Backspace</KeyButton>
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <GlowButton onClick={() => setLinkEditorOpen(false)}>Cancel</GlowButton>
+              <GlowButton active onClick={() => void saveLink()}>
+                {linkBusy ? "Saving…" : "Save"}
               </GlowButton>
             </div>
           </div>
@@ -1630,6 +1992,15 @@ function ProgramIcon({ id }: { id: string }) {
       className={programIconClass(id)}
       onError={() => setHidden(true)}
     />
+  )
+}
+
+function LinkGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="h-5 w-5 shrink-0 text-cyan-100">
+      <path d="M10 13a5 5 0 0 0 7.07 0l1.41-1.41a5 5 0 0 0-7.07-7.07L10 5.93" />
+      <path d="M14 11a5 5 0 0 0-7.07 0L5.52 12.4a5 5 0 0 0 7.07 7.07L14 18.07" />
+    </svg>
   )
 }
 
