@@ -23,20 +23,22 @@ const GRIDS: Record<"101" | "102" | "103", string[][]> = {
   "103": [["TV13"], ["TV18"]],
 }
 
+export const MAX_VIEW_GROUPS = 5
+
 export function isCustomViewId(id: string) {
   return id.startsWith("custom-")
 }
 
-export function groupsFromSelection(computer: "101" | "102" | "103", selected: string[]): Record<string, number> {
+/** Build preset groups from named buckets; leftover screens each get their own window. */
+export function groupsFromBuckets(computer: "101" | "102" | "103", buckets: string[][]): Record<string, number> {
   const all = CUSTOM_VIEW_SCREENS[computer]
-  const picked = new Set(selected.filter((id) => all.includes(id)))
   const map: Record<string, number> = {}
   let next = 0
-  if (picked.size > 0) {
-    for (const id of all) {
-      if (picked.has(id)) map[id] = 0
-    }
-    next = 1
+  for (const bucket of buckets) {
+    const ids = [...new Set(bucket.filter((id) => all.includes(id)))]
+    if (ids.length === 0) continue
+    for (const id of ids) map[id] = next
+    next += 1
   }
   for (const id of all) {
     if (!(id in map)) map[id] = next++
@@ -64,4 +66,38 @@ export function selectionIsRectangle(computer: "101" | "102" | "103", selected: 
     }
   }
   return true
+}
+
+export function normalizeBuckets(computer: "101" | "102" | "103", buckets: string[][]) {
+  const allowed = new Set(CUSTOM_VIEW_SCREENS[computer])
+  return buckets
+    .map((bucket) => [...new Set(bucket.filter((id) => allowed.has(id)))])
+    .filter((bucket) => bucket.length > 0)
+}
+
+export function validateViewBuckets(
+  computer: "101" | "102" | "103",
+  buckets: string[][],
+): { ok: true; buckets: string[][] } | { ok: false; message: string } {
+  const allowed = new Set(CUSTOM_VIEW_SCREENS[computer])
+  for (const bucket of buckets) {
+    if (bucket.some((id) => !allowed.has(id))) {
+      return { ok: false, message: "You can only select screens from the panel you have selected." }
+    }
+  }
+  const cleaned = normalizeBuckets(computer, buckets)
+  if (cleaned.length === 0) {
+    return { ok: false, message: "Tap screens to build at least one Edge window group." }
+  }
+  const used = new Set<string>()
+  for (const bucket of cleaned) {
+    for (const id of bucket) {
+      if (used.has(id)) return { ok: false, message: "A screen can only belong to one group." }
+      used.add(id)
+    }
+    if (!selectionIsRectangle(computer, bucket)) {
+      return { ok: false, message: "Each group needs to form one solid block." }
+    }
+  }
+  return { ok: true, buckets: cleaned }
 }
