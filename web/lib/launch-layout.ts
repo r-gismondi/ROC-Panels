@@ -227,9 +227,27 @@ function publishCustomZones(host: string, computer: string, zones: ZoneSpec[]) {
 function publishWatcher(host: string) {
   const root = layoutsRoot(host)
   fs.mkdirSync(root, { recursive: true })
-  for (const name of ["Watch-Launch.ps1", "Start-Watch.bat", "Launch-InSession.ps1", "Capture-Thumbs.ps1", "Start-Thumbs.bat", "Watch-TypeField.ps1"]) {
-    fs.copyFileSync(path.join(scriptsDir(), name), path.join(root, name))
+  for (const name of [
+    "Watch-Launch.ps1",
+    "Start-Watch.bat",
+    "Launch-InSession.ps1",
+    "Capture-Thumbs.ps1",
+    "Start-Thumbs.bat",
+    "Watch-TypeField.ps1",
+    "Refresh-Edge.ps1",
+  ]) {
+    const source = path.join(scriptsDir(), name)
+    if (!fs.existsSync(source)) continue
+    fs.copyFileSync(source, path.join(root, name))
   }
+}
+
+function publishRefreshScript(host: string) {
+  const source = path.join(scriptsDir(), "Refresh-Edge.ps1")
+  if (!fs.existsSync(source)) return
+  const root = layoutsRoot(host)
+  fs.mkdirSync(root, { recursive: true })
+  fs.copyFileSync(source, path.join(root, "Refresh-Edge.ps1"))
 }
 
 function startLocalWatcher() {
@@ -580,11 +598,7 @@ export async function closeLayoutScreen(computer: string, screen: string): Promi
   return { ok: false, message: "Edge did not close." }
 }
 
-async function waitRefreshResult(
-  host: string,
-  resultFile: string,
-  okMessage: string,
-): Promise<LaunchResult> {
+async function waitRefreshResult(resultFile: string, okMessage: string): Promise<LaunchResult> {
   const started = Date.now()
   let sawWorking = false
   while (Date.now() - started < 20000) {
@@ -596,7 +610,7 @@ async function waitRefreshResult(
       text = ""
     }
     if (!text) {
-      if (!sawWorking && Date.now() - started > 3000) {
+      if (!sawWorking && Date.now() - started > 4000) {
         return { ok: false, message: "Confirm a layout, then refresh the pages." }
       }
       continue
@@ -613,7 +627,7 @@ async function waitRefreshResult(
   return { ok: false, message: "The pages did not refresh." }
 }
 
-function writeRefreshRequest(computer: string, screen: string): { ok: true; host: string; resultFile: string } | { ok: false; message: string } {
+async function queueEdgeRefresh(computer: string, screen: string, okMessage: string): Promise<LaunchResult> {
   const host = HOSTS[computer]
   const screens = ADDRESS_SCREENS[computer]
   if (!host || !screens) return { ok: false, message: "That computer is not on this wall." }
@@ -621,34 +635,56 @@ function writeRefreshRequest(computer: string, screen: string): { ok: true; host
   const layout = readLayoutState()[computer]
   if (!layout || layout === "close") return { ok: false, message: "Edge is not open on those screens." }
   if (process.platform !== "win32") return { ok: false, message: "Run this page on the touchscreen." }
+  const account = layoutAccount()
+  if (!account.password) return { ok: false, message: "Set layoutPassword in pedestal.config.json, then start the console again." }
   const root = path.join(layoutsRoot(host), `computer-${computer}`)
-  const requests = path.join(root, "refresh-requests")
   const results = path.join(root, "refresh-results")
   const resultFile = path.join(results, `${screen}.txt`)
-  const requestFile = path.join(requests, `${screen}.txt`)
+  // The bat runs on the wall PC, so embed local paths rather than admin-share UNC paths.
+  const localRoot = `C:\\layouts\\computer-${computer}`
+  const localScript = "C:\\layouts\\Refresh-Edge.ps1"
+  const bat = path.join(root, `Refresh-${screen}-${Date.now()}-${process.pid}.bat`)
   try {
-    fs.mkdirSync(requests, { recursive: true })
+    publishRefreshScript(host)
+    const known = (watcherReadyUntil.get(host) ?? 0) > Date.now() && watcherIsCurrent(host)
+    if (known) void watcherFresh(host).catch(() => watcherReadyUntil.delete(host))
+    else await ensureWatcher(host, account.user, account.password)
     fs.mkdirSync(results, { recursive: true })
     fs.rmSync(resultFile, { force: true })
-    fs.writeFileSync(`${requestFile}.tmp`, "refresh", "utf8")
-    fs.renameSync(`${requestFile}.tmp`, requestFile)
+    const lines = [
+      "@echo off",
+      `powershell -NoProfile -ExecutionPolicy Bypass -File "${localScript}" -Root "${localRoot}" -Screen "${screen}"`,
+      "",
+    ]
+    fs.writeFileSync(`${bat}.tmp`, lines.join("\r\n"), "ascii")
+    fs.renameSync(`${bat}.tmp`, bat)
+    queueLaunch(host, bat)
   } catch {
+    try {
+      fs.rmSync(bat, { force: true })
+    } catch {
+      // The one-shot bat is unused.
+    }
     return { ok: false, message: `Could not reach the layout on ${host}.` }
   }
-  return { ok: true, host, resultFile }
+  try {
+    return await waitRefreshResult(resultFile, okMessage)
+  } finally {
+    try {
+      fs.rmSync(bat, { force: true })
+    } catch {
+      // The watcher already consumed the bat.
+    }
+  }
 }
 
 export async function refreshLayoutScreen(computer: string, screen: string): Promise<LaunchResult> {
-  const queued = writeRefreshRequest(computer, screen)
-  if (!queued.ok) return queued
   const number = screen.replace("TV", "")
-  return waitRefreshResult(queued.host, queued.resultFile, `Refreshed Edge on screen ${number}.`)
+  return queueEdgeRefresh(computer, screen, `Refreshed Edge on screen ${number}.`)
 }
 
 export async function refreshLayout(computer: string): Promise<LaunchResult> {
-  const queued = writeRefreshRequest(computer, "ALL")
-  if (!queued.ok) return queued
-  return waitRefreshResult(queued.host, queued.resultFile, "Refreshed the open Edge pages.")
+  return queueEdgeRefresh(computer, "ALL", "Refreshed the open Edge pages.")
 }
 
 function computerForScreen(screen: string) {
