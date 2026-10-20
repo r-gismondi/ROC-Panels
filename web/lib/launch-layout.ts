@@ -13,6 +13,7 @@ import {
   type CustomView,
 } from "@/lib/custom-views"
 import { installRoot, scriptsDir } from "@/lib/install-root"
+import { operatorDataRoot } from "@/lib/operator-data"
 import type { ZoneSpec } from "@/lib/screen-geometry"
 
 const execFileAsync = promisify(execFile)
@@ -340,8 +341,7 @@ export function layoutAccount() {
 
 // The pedestal rebuild deletes dist, so the last layout lives in the user profile.
 function layoutStateDir() {
-  const base = process.platform === "win32" && process.env.LOCALAPPDATA ? process.env.LOCALAPPDATA : os.tmpdir()
-  return path.join(base, "ROC-Panels", "layout-state")
+  return path.join(operatorDataRoot(), "layout-state")
 }
 
 function layoutStateFile(computer: string) {

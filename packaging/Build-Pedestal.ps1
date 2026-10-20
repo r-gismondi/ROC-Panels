@@ -11,10 +11,14 @@ $pythonUrl = "https://www.python.org/ftp/python/$pythonVersion/python-$pythonVer
 
 if (-not (Test-Path -LiteralPath $csc)) { throw "The .NET compiler was not found at $csc" }
 
+$nodeCommand = Get-Command node -ErrorAction SilentlyContinue
+if (-not $nodeCommand) { throw "node was not found on PATH. Install Node.js or add it before building." }
+$nodeExe = $nodeCommand.Source
+
 Write-Host "Building the console..."
 Push-Location $web
 try {
-    & node .\scripts\repair-next-picocolors.cjs build
+    & $nodeExe .\scripts\repair-next-picocolors.cjs build
     if ($LASTEXITCODE -ne 0) { throw "next build failed" }
 } finally {
     Pop-Location
@@ -24,7 +28,24 @@ $standalone = Join-Path $web ".next\standalone"
 $serverJs = Get-ChildItem -LiteralPath $standalone -Recurse -Filter server.js | Where-Object { $_.FullName -notmatch '\\node_modules\\' } | Select-Object -First 1
 if (-not $serverJs) { throw "The standalone server was not produced." }
 
-if (Test-Path -LiteralPath $dist) { Remove-Item -LiteralPath $dist -Recurse -Force }
+# Keep operator-owned files out of the wiped install folder (also stored under %LOCALAPPDATA%\ROC-Panels).
+$operatorData = Join-Path $env:LOCALAPPDATA "ROC-Panels"
+if (Test-Path -LiteralPath $dist) {
+    New-Item -ItemType Directory -Force -Path $operatorData | Out-Null
+    foreach ($name in @("saved-links.json", "custom-views.json", "pinned-apps.json")) {
+        $source = Join-Path $dist $name
+        $destination = Join-Path $operatorData $name
+        if ((Test-Path -LiteralPath $source) -and -not (Test-Path -LiteralPath $destination)) {
+            Copy-Item -LiteralPath $source -Destination $destination
+        }
+    }
+    $iconSource = Join-Path $dist "program-icons"
+    $iconDestination = Join-Path $operatorData "program-icons"
+    if ((Test-Path -LiteralPath $iconSource) -and -not (Test-Path -LiteralPath $iconDestination)) {
+        Copy-Item -LiteralPath $iconSource -Destination $iconDestination -Recurse
+    }
+    Remove-Item -LiteralPath $dist -Recurse -Force
+}
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
 
 $serverDir = Join-Path $dist "server"
@@ -37,7 +58,7 @@ Copy-Item -LiteralPath (Join-Path $web "public") -Destination (Join-Path $server
 
 $nodeDir = Join-Path $dist "node"
 New-Item -ItemType Directory -Force -Path $nodeDir | Out-Null
-Copy-Item -LiteralPath (Get-Command node).Source -Destination (Join-Path $nodeDir "node.exe")
+Copy-Item -LiteralPath $nodeExe -Destination (Join-Path $nodeDir "node.exe")
 
 if (-not (Test-Path -LiteralPath $pythonZip)) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $pythonZip) | Out-Null

@@ -215,6 +215,8 @@ export function WallConsole() {
   const [viewBusy, setViewBusy] = useState(false)
   const [viewStatus, setViewStatus] = useState("")
   const [panelGuardOpen, setPanelGuardOpen] = useState(false)
+  const [removeViewAsk, setRemoveViewAsk] = useState<{ id: string; name: string } | null>(null)
+  const removeViewHold = useRef<{ id: string; name: string } | null>(null)
   const [linkBusy, setLinkBusy] = useState(false)
   const linkNameRef = useRef<HTMLInputElement | null>(null)
   const linkUrlRef = useRef<HTMLInputElement | null>(null)
@@ -1476,7 +1478,10 @@ export function WallConsole() {
   })
   const viewEditorPresence = usePresence(viewEditorOpen)
   const panelGuardPresence = usePresence(panelGuardOpen)
-  usePhysicalTyping(viewEditorOpen && !panelGuardOpen, {
+  if (removeViewAsk) removeViewHold.current = removeViewAsk
+  const removeViewShown = removeViewAsk ?? removeViewHold.current
+  const removeViewPresence = usePresence(Boolean(removeViewAsk))
+  usePhysicalTyping(viewEditorOpen && !panelGuardOpen && !removeViewAsk, {
     onInsert: insertViewToken,
     onBackspace: backspaceView,
     onEnter: () => {
@@ -1741,7 +1746,10 @@ export function WallConsole() {
           pending={previewPending && !viewEditorOpen}
           creating={viewEditorOpen}
           onCreate={openViewEditor}
-          onRemove={(id) => void removeCustomView(id)}
+          onRemove={(id) => {
+            const name = footer.presets.find((item) => item.id === id)?.name ?? "this view"
+            setRemoveViewAsk({ id, name })
+          }}
           onSelect={(id) => {
             if (viewEditorOpen) return
             const name = footer.presets.find((item) => item.id === id)?.name ?? id
@@ -2201,6 +2209,44 @@ export function WallConsole() {
           </div>
         </div>
       ) : null}
+      {removeViewPresence.mounted && removeViewShown ? (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="remove-view-title"
+          className={`fixed inset-0 z-50 flex items-center justify-center bg-[#03102e]/60 backdrop-blur-[2px] px-4 ${removeViewPresence.visible ? "opacity-100" : "opacity-0"} ${removeViewAsk ? "" : "pointer-events-none"}`}
+          style={motionStyle}
+          onClick={() => setRemoveViewAsk(null)}
+        >
+          <div
+            onClick={(event) => event.stopPropagation()}
+            className={`w-[min(28rem,96vw)] rounded-2xl border border-cyan-300/80 bg-[#071a4d] px-6 py-6 shadow-[0_0_40px_rgba(80,200,255,0.25)] ${removeViewPresence.visible ? "translate-y-0 scale-100" : "translate-y-4 scale-95"}`}
+            style={motionStyle}
+          >
+            <p className="text-[11px] tracking-[0.18em] text-cyan-100/70">CUSTOM VIEW</p>
+            <p id="remove-view-title" className="mt-1 text-xl font-semibold tracking-wide">
+              Delete this view?
+            </p>
+            <p className="mt-3 text-sm leading-6 text-cyan-50/90">
+              Remove <span className="font-semibold text-white">{removeViewShown.name}</span>? This cannot be undone.
+            </p>
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <GlowButton onClick={() => setRemoveViewAsk(null)}>Cancel</GlowButton>
+              <GlowButton
+                tone="alert"
+                active
+                onClick={() => {
+                  const id = removeViewShown.id
+                  setRemoveViewAsk(null)
+                  void removeCustomView(id)
+                }}
+              >
+                Delete
+              </GlowButton>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   )
 }
@@ -2627,11 +2673,10 @@ function PresetRow({
   onClose: () => void
   onCloseAll: () => void
 }) {
-  const columns = presets.length + 1 > 2 ? "sm:grid-cols-3 lg:grid-cols-6" : "sm:grid-cols-2 sm:max-w-md"
   return (
     <div>
-      <div className="mb-2 flex items-end justify-between gap-3">
-        <div>
+      <div className="mb-2 flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
           <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{label}</p>
           <p className="text-xs text-cyan-100/80">
             {creating
@@ -2641,7 +2686,13 @@ function PresetRow({
                 : "Choose a preset to preview it on the screens."}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <GlowButton active={creating} onClick={onCreate}>
+            <span className="flex items-center gap-2">
+              <span className="flex h-5 w-5 items-center justify-center rounded-sm border border-dashed border-cyan-200/70 text-base leading-none">+</span>
+              <span>Create custom</span>
+            </span>
+          </GlowButton>
           <GlowButton tone="alert" onClick={onClose}>
             Close Edge
           </GlowButton>
@@ -2650,9 +2701,9 @@ function PresetRow({
           </GlowButton>
         </div>
       </div>
-      <div className={`grid grid-cols-2 gap-2 ${columns}`}>
+      <div className="flex flex-wrap items-start gap-2">
         {presets.map((item) => (
-          <div key={item.id} className="relative">
+          <div key={item.id} className="relative w-fit">
             <GlowButton active={activeId !== "" && item.id === activeId} onClick={() => onSelect(item.id)}>
               <span className="flex flex-col items-center gap-1.5 py-2">
                 <PresetGlyph rows={rows} preset={item} />
@@ -2667,19 +2718,13 @@ function PresetRow({
                   event.stopPropagation()
                   onRemove(item.id)
                 }}
-                className="absolute -right-1 -top-1 flex h-7 w-7 items-center justify-center rounded-full border border-cyan-200/50 bg-[#0a2f86] text-sm leading-none text-cyan-50"
+                className="absolute -right-1.5 -top-1.5 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-cyan-200/50 bg-[#0a2f86] text-sm leading-none text-cyan-50 shadow-[0_0_10px_rgba(0,0,0,0.35)]"
               >
                 ×
               </button>
             ) : null}
           </div>
         ))}
-        <GlowButton active={creating} onClick={onCreate}>
-          <span className="flex flex-col items-center gap-1.5 py-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-sm border border-dashed border-cyan-200/70 text-lg leading-none">+</span>
-            <span>Create custom</span>
-          </span>
-        </GlowButton>
       </div>
       <Reveal show={pending} motion="down" className="mt-2">
         <div className="grid max-w-md grid-cols-2 gap-2">

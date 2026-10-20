@@ -4,7 +4,7 @@ import { promisify } from "util"
 import fs from "fs"
 import path from "path"
 import { C_CONNECT_ID, C_CONNECT_NAME, C_CONNECT_URL } from "@/lib/c-connect"
-import { installRoot } from "@/lib/install-root"
+import { operatorDir, operatorFile, writeOperatorJson } from "@/lib/operator-data"
 import { launchProgram, launchScreenAddress, type LaunchResult } from "@/lib/launch-layout"
 
 const execFileAsync = promisify(execFile)
@@ -18,7 +18,7 @@ export function listedPins(stored = readPins()): PinnedApp[] {
 }
 
 function pinsFile() {
-  return path.join(installRoot(), "pinned-apps.json")
+  return operatorFile("pinned-apps.json")
 }
 
 export function readPins(): PinnedApp[] {
@@ -36,11 +36,7 @@ export function readPins(): PinnedApp[] {
 }
 
 function writePins(pins: PinnedApp[]) {
-  const file = pinsFile()
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const temporary = `${file}.${process.pid}.tmp`
-  fs.writeFileSync(temporary, JSON.stringify(pins, null, 2), "utf8")
-  fs.renameSync(temporary, file)
+  writeOperatorJson(pinsFile(), pins)
 }
 
 const BROWSE_SCRIPT = `
@@ -251,7 +247,7 @@ export async function browseForProgram(): Promise<{ ok: true; pins: PinnedApp[];
 }
 
 function iconFile(id: string) {
-  return path.join(installRoot(), "program-icons", `${id}.png`)
+  return path.join(operatorDir("program-icons"), `${id}.png`)
 }
 
 const ICON_SCRIPT = `
