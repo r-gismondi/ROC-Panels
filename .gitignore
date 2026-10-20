@@ -1,6 +1,7 @@
 dist/
 layout-state/
 pinned-apps.json
+saved-links.json
 program-icons/
 packaging/cache/
 __pycache__/
