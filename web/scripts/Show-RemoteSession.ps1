@@ -993,6 +993,9 @@ function Update-SessionControls {
             try { $script:barColor = Get-ScreenColor ([int]($rect.Left + $rect.Width / 2 - $side / 2 - 4)) ([int]($rect.Top + $rect.Height / 2)) } catch {}
             $form.Invalidate()
             $keys.Invalidate()
+            try { $f5.Invalidate() } catch {}
+            try { $fn.Invalidate() } catch {}
+            try { if ($script:fnShown) { $fnStrip.Invalidate() } } catch {}
             Write-Log "Bar X: '$($closers[0].Name)' at $([int]$rect.Left),$([int]$rect.Top) $([int]$rect.Width)x$([int]$rect.Height)"
         }
     }
@@ -1267,9 +1270,9 @@ function Stop-Session {
     Write-Log "Disconnecting $($script:Name)"
     $form.Hide()
     $keys.Hide()
-    $f5.Hide()
-    $fn.Hide()
-    $fnStrip.Hide()
+    try { $f5.Hide() } catch {}
+    try { $fn.Hide() } catch {}
+    try { $fnStrip.Hide() } catch {}
     $script:fnShown = $false
     if ($script:disconnect) {
         try {
@@ -1372,23 +1375,36 @@ $f5.Text = "F5 refresh"
 $f5.BackColor = $barBlack
 $f5.Bounds = New-Object System.Drawing.Rectangle ($bounds.Right - 144), $bounds.Top, 48, 48
 $f5.Cursor = [System.Windows.Forms.Cursors]::Hand
-$f5.Add_Paint({
-    param($sender, $e)
-    $g = $e.Graphics
-    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-    $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
-    $g.Clear($(if ($script:f5Hot) { $keysHover } else { $script:barColor }))
-    $font = New-Object System.Drawing.Font "Segoe UI", ([float][Math]::Max(11.0, $f5.ClientSize.Height / 3.6)), [System.Drawing.FontStyle]::Bold
+function Paint-FunctionLabel($Graphics, [string]$Text, [float]$Left, [float]$Top, [float]$Width, [float]$Height, [System.Drawing.Color]$Background, [switch]$Fill) {
+    $Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $Graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+    if ($Fill) {
+        $fillBrush = New-Object System.Drawing.SolidBrush $Background
+        try { $Graphics.FillRectangle($fillBrush, $Left, $Top, $Width, $Height) } finally { $fillBrush.Dispose() }
+    } else {
+        $Graphics.Clear($Background)
+    }
+    $em = [Math]::Max(9.0, [Math]::Min($Height / 2.6, $Width / [Math]::Max(2.0, $Text.Length)))
+    $font = New-Object System.Drawing.Font -ArgumentList @("Segoe UI", [float]$em, [System.Drawing.FontStyle]::Bold)
     $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
     $format = New-Object System.Drawing.StringFormat
     $format.Alignment = [System.Drawing.StringAlignment]::Center
     $format.LineAlignment = [System.Drawing.StringAlignment]::Center
     try {
-        $g.DrawString("F5", $font, $brush, (New-Object System.Drawing.RectangleF 0, 0, $f5.ClientSize.Width, $f5.ClientSize.Height), $format)
+        $Graphics.DrawString($Text, $font, $brush, (New-Object System.Drawing.RectangleF -ArgumentList @($Left, $Top, $Width, $Height)), $format)
     } finally {
         $font.Dispose()
         $brush.Dispose()
         $format.Dispose()
+    }
+}
+
+$f5.Add_Paint({
+    param($sender, $e)
+    try {
+        Paint-FunctionLabel $e.Graphics "F5" 0 0 $f5.ClientSize.Width $f5.ClientSize.Height $(if ($script:f5Hot) { $keysHover } else { $script:barColor })
+    } catch {
+        try { $e.Graphics.Clear($(if ($script:f5Hot) { $keysHover } else { $script:barColor })) } catch {}
     }
 })
 $f5.Add_MouseEnter({ $script:f5Hot = $true; $f5.Invalidate() })
@@ -1406,21 +1422,10 @@ $fn.Bounds = New-Object System.Drawing.Rectangle ($bounds.Right - 192), $bounds.
 $fn.Cursor = [System.Windows.Forms.Cursors]::Hand
 $fn.Add_Paint({
     param($sender, $e)
-    $g = $e.Graphics
-    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-    $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
-    $g.Clear($(if ($script:fnShown) { $keysOn } elseif ($script:fnHot) { $keysHover } else { $script:barColor }))
-    $font = New-Object System.Drawing.Font "Segoe UI", ([float][Math]::Max(11.0, $fn.ClientSize.Height / 3.6)), [System.Drawing.FontStyle]::Bold
-    $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
-    $format = New-Object System.Drawing.StringFormat
-    $format.Alignment = [System.Drawing.StringAlignment]::Center
-    $format.LineAlignment = [System.Drawing.StringAlignment]::Center
     try {
-        $g.DrawString("Fn", $font, $brush, (New-Object System.Drawing.RectangleF 0, 0, $fn.ClientSize.Width, $fn.ClientSize.Height), $format)
-    } finally {
-        $font.Dispose()
-        $brush.Dispose()
-        $format.Dispose()
+        Paint-FunctionLabel $e.Graphics "Fn" 0 0 $fn.ClientSize.Width $fn.ClientSize.Height $(if ($script:fnShown) { $keysOn } elseif ($script:fnHot) { $keysHover } else { $script:barColor })
+    } catch {
+        try { $e.Graphics.Clear($(if ($script:fnShown) { $keysOn } elseif ($script:fnHot) { $keysHover } else { $script:barColor })) } catch {}
     }
 })
 $fn.Add_MouseEnter({ $script:fnHot = $true; $fn.Invalidate() })
@@ -1438,30 +1443,18 @@ $fnStrip.Bounds = New-Object System.Drawing.Rectangle ($bounds.Right - 600), ($b
 $fnStrip.Cursor = [System.Windows.Forms.Cursors]::Hand
 $fnStrip.Add_Paint({
     param($sender, $e)
-    $g = $e.Graphics
-    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-    $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
-    $g.Clear($script:barColor)
-    $cell = $fnStrip.ClientSize.Width / 12.0
-    $font = New-Object System.Drawing.Font "Segoe UI", ([float][Math]::Max(10.0, $fnStrip.ClientSize.Height / 3.2)), [System.Drawing.FontStyle]::Bold
-    $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
-    $hotBrush = New-Object System.Drawing.SolidBrush $keysHover
-    $format = New-Object System.Drawing.StringFormat
-    $format.Alignment = [System.Drawing.StringAlignment]::Center
-    $format.LineAlignment = [System.Drawing.StringAlignment]::Center
     try {
+        $g = $e.Graphics
+        $g.Clear($script:barColor)
+        $cell = [float]($fnStrip.ClientSize.Width / 12.0)
+        $height = [float]$fnStrip.ClientSize.Height
         for ($i = 0; $i -lt 12; $i++) {
             $left = [float]($i * $cell)
-            if ($script:fnStripHot -eq $i) {
-                $g.FillRectangle($hotBrush, $left, 0, [float]$cell, [float]$fnStrip.ClientSize.Height)
-            }
-            $g.DrawString("F$($i + 1)", $font, $brush, (New-Object System.Drawing.RectangleF $left, 0, [float]$cell, [float]$fnStrip.ClientSize.Height), $format)
+            $background = if ($script:fnStripHot -eq $i) { $keysHover } else { $script:barColor }
+            Paint-FunctionLabel $g "F$($i + 1)" $left 0 $cell $height $background -Fill
         }
-    } finally {
-        $font.Dispose()
-        $brush.Dispose()
-        $hotBrush.Dispose()
-        $format.Dispose()
+    } catch {
+        try { $e.Graphics.Clear($script:barColor) } catch {}
     }
 })
 $fnStrip.Add_MouseMove({
