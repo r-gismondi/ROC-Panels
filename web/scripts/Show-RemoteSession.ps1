@@ -286,8 +286,12 @@ public static class RemoteWin {
     public static void Close(IntPtr hwnd) { PostMessage(hwnd, 0x0010, IntPtr.Zero, IntPtr.Zero); }
 
     public static void PressF11() {
-        keybd_event(0x7A, 0, 0, UIntPtr.Zero);
-        keybd_event(0x7A, 0, 2, UIntPtr.Zero);
+        PressKey(0x7A);
+    }
+
+    public static void PressKey(byte vk) {
+        keybd_event(vk, 0, 0, UIntPtr.Zero);
+        keybd_event(vk, 0, 2, UIntPtr.Zero);
     }
 
     public static void ClickScreen(int x, int y) {
@@ -547,6 +551,10 @@ $script:panelOpen = $false
 $script:lastSurfaceFocus = [datetime]::MinValue
 $script:keyboardShown = $false
 $script:keyboardAuto = $false
+$script:fnShown = $false
+$script:f5Hot = $false
+$script:fnHot = $false
+$script:fnStripHot = -1
 $script:keysHot = $false
 $script:fieldLast = $null
 $script:lastFieldAction = [datetime]::MinValue
@@ -585,9 +593,11 @@ function Set-SessionOrder {
     }
     [RemoteWin]::KeepOnTop($form.Handle)
     $under = $form.Handle
-    if ($keys.Visible) {
-        [RemoteWin]::KeepBelow($keys.Handle, $under)
-        $under = $keys.Handle
+    foreach ($overlay in @($keys, $f5, $fn, $fnStrip)) {
+        if ($overlay.Visible) {
+            [RemoteWin]::KeepBelow($overlay.Handle, $under)
+            $under = $overlay.Handle
+        }
     }
     if ($homeButton -ne [IntPtr]::Zero) {
         [RemoteWin]::KeepBelow($homeButton, $under)
@@ -1122,10 +1132,34 @@ function Update-CloseButton {
         $form.Bounds = New-Object System.Drawing.Rectangle $x, $y, $w, $h
         $form.Invalidate()
     }
-    $keysX = $x - $w - $(if ($script:ghost) { 0 } else { 8 })
+    $gap = $(if ($script:ghost) { 0 } else { 8 })
+    $keysX = $x - $w - $gap
     if ($keys.Left -ne $keysX -or $keys.Top -ne $y -or $keys.Width -ne $w -or $keys.Height -ne $h) {
         $keys.Bounds = New-Object System.Drawing.Rectangle $keysX, $y, $w, $h
         $keys.Invalidate()
+    }
+    $f5X = $keysX - $w - $gap
+    if ($f5.Left -ne $f5X -or $f5.Top -ne $y -or $f5.Width -ne $w -or $f5.Height -ne $h) {
+        $f5.Bounds = New-Object System.Drawing.Rectangle $f5X, $y, $w, $h
+        $f5.Invalidate()
+    }
+    $fnX = $f5X - $w - $gap
+    if ($fn.Left -ne $fnX -or $fn.Top -ne $y -or $fn.Width -ne $w -or $fn.Height -ne $h) {
+        $fn.Bounds = New-Object System.Drawing.Rectangle $fnX, $y, $w, $h
+        $fn.Invalidate()
+    }
+    if ($script:fnShown) {
+        $stripH = [Math]::Max(44, $h)
+        $stripW = [Math]::Min($bounds.Width - 24, 12 * [Math]::Max(44, $w))
+        $stripX = [Math]::Max($bounds.Left + 12, $fnX + $w - $stripW)
+        $stripY = $y + $h + $(if ($script:ghost) { 0 } else { 8 })
+        if ($fnStrip.Left -ne $stripX -or $fnStrip.Top -ne $stripY -or $fnStrip.Width -ne $stripW -or $fnStrip.Height -ne $stripH) {
+            $fnStrip.Bounds = New-Object System.Drawing.Rectangle $stripX, $stripY, $stripW, $stripH
+            $fnStrip.Invalidate()
+        }
+        if (-not $fnStrip.Visible) { $fnStrip.Show() }
+    } elseif ($fnStrip.Visible) {
+        $fnStrip.Hide()
     }
     if ($script:ghost) {
         if ($fade.Enabled) { $fade.Stop() }
@@ -1133,6 +1167,25 @@ function Update-CloseButton {
     } elseif ($form.Visible -and $form.Opacity -lt 1.0 -and -not $fade.Enabled) {
         $fade.Start()
     }
+}
+
+function Send-FunctionKey([byte]$Vk) {
+    if ($script:hwnd -eq [IntPtr]::Zero -or -not [RemoteWin]::IsWindow($script:hwnd)) { return }
+    [RemoteWin]::Focus($script:hwnd)
+    Start-Sleep -Milliseconds 40
+    [RemoteWin]::PressKey($Vk)
+}
+
+function Switch-FunctionKeys {
+    $script:fnShown = -not $script:fnShown
+    $fn.Invalidate()
+    if ($script:fnShown) {
+        Update-CloseButton
+        $fnStrip.Show()
+    } else {
+        $fnStrip.Hide()
+    }
+    Set-SessionOrder
 }
 
 function Read-Request {
@@ -1149,9 +1202,13 @@ function Read-Request {
         return
     }
     Hide-TouchKeyboard
+    $script:fnShown = $false
     if ($script:hwnd -ne [IntPtr]::Zero) { [RemoteWin]::Close($script:hwnd) }
     $form.Hide()
     $keys.Hide()
+    $f5.Hide()
+    $fn.Hide()
+    $fnStrip.Hide()
     [RemoteWin]::UnlockFullscreenKeys()
     try { if ($lock.Visible) { $lock.Hide() } } catch {}
     $script:Name = $parts[0].Trim()
@@ -1186,13 +1243,20 @@ function Stop-Host {
     $timer.Stop()
     $fade.Stop()
     Hide-TouchKeyboard
+    $script:fnShown = $false
     [RemoteWin]::UnlockFullscreenKeys()
     try { if ($lock.Visible) { $lock.Hide() } } catch {}
     try { if ($keys.Visible) { $keys.Hide() } } catch {}
+    try { if ($f5.Visible) { $f5.Hide() } } catch {}
+    try { if ($fn.Visible) { $fn.Hide() } } catch {}
+    try { if ($fnStrip.Visible) { $fnStrip.Hide() } } catch {}
     Show-Console
     try { $form.Close() } catch {}
     try { $lock.Close() } catch {}
     try { $keys.Close() } catch {}
+    try { $f5.Close() } catch {}
+    try { $fn.Close() } catch {}
+    try { $fnStrip.Close() } catch {}
     $context.ExitThread()
 }
 
@@ -1203,6 +1267,10 @@ function Stop-Session {
     Write-Log "Disconnecting $($script:Name)"
     $form.Hide()
     $keys.Hide()
+    $f5.Hide()
+    $fn.Hide()
+    $fnStrip.Hide()
+    $script:fnShown = $false
     if ($script:disconnect) {
         try {
             $pattern = $null
@@ -1295,6 +1363,129 @@ $keys.Add_MouseEnter({ $script:keysHot = $true; $keys.Invalidate() })
 $keys.Add_MouseLeave({ $script:keysHot = $false; $keys.Invalidate() })
 $keys.Add_Click({ try { Switch-TouchKeyboard } catch { Write-Log "Keyboard: $($_.Exception.Message)" } })
 
+$f5 = New-Object GhostForm
+$f5.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+$f5.ShowInTaskbar = $false
+$f5.TopMost = $true
+$f5.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+$f5.Text = "F5 refresh"
+$f5.BackColor = $barBlack
+$f5.Bounds = New-Object System.Drawing.Rectangle ($bounds.Right - 144), $bounds.Top, 48, 48
+$f5.Cursor = [System.Windows.Forms.Cursors]::Hand
+$f5.Add_Paint({
+    param($sender, $e)
+    $g = $e.Graphics
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+    $g.Clear($(if ($script:f5Hot) { $keysHover } else { $script:barColor }))
+    $font = New-Object System.Drawing.Font "Segoe UI", ([float][Math]::Max(11.0, $f5.ClientSize.Height / 3.6)), [System.Drawing.FontStyle]::Bold
+    $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
+    $format = New-Object System.Drawing.StringFormat
+    $format.Alignment = [System.Drawing.StringAlignment]::Center
+    $format.LineAlignment = [System.Drawing.StringAlignment]::Center
+    try {
+        $g.DrawString("F5", $font, $brush, (New-Object System.Drawing.RectangleF 0, 0, $f5.ClientSize.Width, $f5.ClientSize.Height), $format)
+    } finally {
+        $font.Dispose()
+        $brush.Dispose()
+        $format.Dispose()
+    }
+})
+$f5.Add_MouseEnter({ $script:f5Hot = $true; $f5.Invalidate() })
+$f5.Add_MouseLeave({ $script:f5Hot = $false; $f5.Invalidate() })
+$f5.Add_Click({ try { Send-FunctionKey 0x74 } catch { Write-Log "F5: $($_.Exception.Message)" } })
+
+$fn = New-Object GhostForm
+$fn.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+$fn.ShowInTaskbar = $false
+$fn.TopMost = $true
+$fn.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+$fn.Text = "Function keys"
+$fn.BackColor = $barBlack
+$fn.Bounds = New-Object System.Drawing.Rectangle ($bounds.Right - 192), $bounds.Top, 48, 48
+$fn.Cursor = [System.Windows.Forms.Cursors]::Hand
+$fn.Add_Paint({
+    param($sender, $e)
+    $g = $e.Graphics
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+    $g.Clear($(if ($script:fnShown) { $keysOn } elseif ($script:fnHot) { $keysHover } else { $script:barColor }))
+    $font = New-Object System.Drawing.Font "Segoe UI", ([float][Math]::Max(11.0, $fn.ClientSize.Height / 3.6)), [System.Drawing.FontStyle]::Bold
+    $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
+    $format = New-Object System.Drawing.StringFormat
+    $format.Alignment = [System.Drawing.StringAlignment]::Center
+    $format.LineAlignment = [System.Drawing.StringAlignment]::Center
+    try {
+        $g.DrawString("Fn", $font, $brush, (New-Object System.Drawing.RectangleF 0, 0, $fn.ClientSize.Width, $fn.ClientSize.Height), $format)
+    } finally {
+        $font.Dispose()
+        $brush.Dispose()
+        $format.Dispose()
+    }
+})
+$fn.Add_MouseEnter({ $script:fnHot = $true; $fn.Invalidate() })
+$fn.Add_MouseLeave({ $script:fnHot = $false; $fn.Invalidate() })
+$fn.Add_Click({ try { Switch-FunctionKeys } catch { Write-Log "Fn: $($_.Exception.Message)" } })
+
+$fnStrip = New-Object GhostForm
+$fnStrip.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+$fnStrip.ShowInTaskbar = $false
+$fnStrip.TopMost = $true
+$fnStrip.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+$fnStrip.Text = "Function key strip"
+$fnStrip.BackColor = $barBlack
+$fnStrip.Bounds = New-Object System.Drawing.Rectangle ($bounds.Right - 600), ($bounds.Top + 56), 528, 44
+$fnStrip.Cursor = [System.Windows.Forms.Cursors]::Hand
+$fnStrip.Add_Paint({
+    param($sender, $e)
+    $g = $e.Graphics
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+    $g.Clear($script:barColor)
+    $cell = $fnStrip.ClientSize.Width / 12.0
+    $font = New-Object System.Drawing.Font "Segoe UI", ([float][Math]::Max(10.0, $fnStrip.ClientSize.Height / 3.2)), [System.Drawing.FontStyle]::Bold
+    $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
+    $hotBrush = New-Object System.Drawing.SolidBrush $keysHover
+    $format = New-Object System.Drawing.StringFormat
+    $format.Alignment = [System.Drawing.StringAlignment]::Center
+    $format.LineAlignment = [System.Drawing.StringAlignment]::Center
+    try {
+        for ($i = 0; $i -lt 12; $i++) {
+            $left = [float]($i * $cell)
+            if ($script:fnStripHot -eq $i) {
+                $g.FillRectangle($hotBrush, $left, 0, [float]$cell, [float]$fnStrip.ClientSize.Height)
+            }
+            $g.DrawString("F$($i + 1)", $font, $brush, (New-Object System.Drawing.RectangleF $left, 0, [float]$cell, [float]$fnStrip.ClientSize.Height), $format)
+        }
+    } finally {
+        $font.Dispose()
+        $brush.Dispose()
+        $hotBrush.Dispose()
+        $format.Dispose()
+    }
+})
+$fnStrip.Add_MouseMove({
+    param($sender, $e)
+    $cell = [Math]::Max(1.0, $fnStrip.ClientSize.Width / 12.0)
+    $index = [int][Math]::Floor($e.X / $cell)
+    if ($index -lt 0 -or $index -gt 11) { $index = -1 }
+    if ($script:fnStripHot -ne $index) {
+        $script:fnStripHot = $index
+        $fnStrip.Invalidate()
+    }
+})
+$fnStrip.Add_MouseLeave({ $script:fnStripHot = -1; $fnStrip.Invalidate() })
+$fnStrip.Add_MouseClick({
+    param($sender, $e)
+    try {
+        $cell = [Math]::Max(1.0, $fnStrip.ClientSize.Width / 12.0)
+        $index = [int][Math]::Floor($e.X / $cell)
+        if ($index -ge 0 -and $index -le 11) { Send-FunctionKey ([byte](0x70 + $index)) }
+    } catch {
+        Write-Log "Fn key: $($_.Exception.Message)"
+    }
+})
+
 $lock = New-Object GhostForm
 $lock.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $lock.ShowInTaskbar = $false
@@ -1361,6 +1552,8 @@ $timer.Add_Tick({
             $form.Opacity = $(if ($script:ghost) { $ghostOpacity } else { 0 })
             $form.Show()
             $keys.Show()
+            $f5.Show()
+            $fn.Show()
             [RemoteWin]::Focus($script:hwnd)
             if (-not $script:ghost) { $fade.Start() }
         }
