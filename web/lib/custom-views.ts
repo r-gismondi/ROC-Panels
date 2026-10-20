@@ -1,6 +1,5 @@
 import crypto from "crypto"
 import fs from "fs"
-import path from "path"
 import {
   adaptCustomView,
   canApplyCustomView,
@@ -10,14 +9,14 @@ import {
   validateViewBuckets,
   type CustomView,
 } from "@/lib/custom-view-model"
-import { installRoot } from "@/lib/install-root"
+import { operatorFile, writeOperatorJson } from "@/lib/operator-data"
 import { zonesFromGroups, type ZoneSpec } from "@/lib/screen-geometry"
 
 export type { CustomView }
 export { adaptCustomView, canApplyCustomView, groupsFromBuckets, isCustomViewId, panelFamily }
 
 function viewsFile() {
-  return path.join(installRoot(), "custom-views.json")
+  return operatorFile("custom-views.json")
 }
 
 export function readCustomViews(): CustomView[] {
@@ -42,11 +41,7 @@ export function readCustomViews(): CustomView[] {
 }
 
 function writeCustomViews(views: CustomView[]) {
-  const file = viewsFile()
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const temporary = `${file}.${process.pid}.tmp`
-  fs.writeFileSync(temporary, JSON.stringify(views, null, 2), "utf8")
-  fs.renameSync(temporary, file)
+  writeOperatorJson(viewsFile(), views)
 }
 
 export function customViewsFor(computer: "101" | "102" | "103") {

@@ -1,13 +1,12 @@
 import crypto from "crypto"
 import fs from "fs"
-import path from "path"
-import { installRoot } from "@/lib/install-root"
+import { operatorFile, writeOperatorJson } from "@/lib/operator-data"
 import { launchScreenAddress, type LaunchResult } from "@/lib/launch-layout"
 
 export type SavedLink = { id: string; name: string; url: string }
 
 function linksFile() {
-  return path.join(installRoot(), "saved-links.json")
+  return operatorFile("saved-links.json")
 }
 
 export function readLinks(): SavedLink[] {
@@ -25,11 +24,7 @@ export function readLinks(): SavedLink[] {
 }
 
 function writeLinks(links: SavedLink[]) {
-  const file = linksFile()
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const temporary = `${file}.${process.pid}.tmp`
-  fs.writeFileSync(temporary, JSON.stringify(links, null, 2), "utf8")
-  fs.renameSync(temporary, file)
+  writeOperatorJson(linksFile(), links)
 }
 
 export function normalizeLinkUrl(value: string) {
