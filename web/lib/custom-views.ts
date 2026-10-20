@@ -3,16 +3,16 @@ import fs from "fs"
 import path from "path"
 import {
   CUSTOM_VIEW_SCREENS,
-  groupsFromSelection,
+  groupsFromBuckets,
   isCustomViewId,
-  selectionIsRectangle,
+  validateViewBuckets,
   type CustomView,
 } from "@/lib/custom-view-model"
 import { installRoot } from "@/lib/install-root"
 import { zonesFromGroups, type ZoneSpec } from "@/lib/screen-geometry"
 
 export type { CustomView }
-export { groupsFromSelection, isCustomViewId, CUSTOM_VIEW_SCREENS as screenIdsFor }
+export { groupsFromBuckets, isCustomViewId, CUSTOM_VIEW_SCREENS as screenIdsFor }
 
 function viewsFile() {
   return path.join(installRoot(), "custom-views.json")
@@ -58,19 +58,12 @@ export function findCustomView(id: string) {
 export function addCustomView(
   computer: "101" | "102" | "103",
   name: string,
-  selected: string[],
+  buckets: string[][],
 ): { ok: true; views: CustomView[]; selectedId: string } | { ok: false; message: string } {
   const display = name.trim().slice(0, 40)
   if (!display) return { ok: false, message: "Type a name for this view." }
-  const all = CUSTOM_VIEW_SCREENS[computer]
-  const picked = [...new Set(selected.filter((id) => all.includes(id)))]
-  if (picked.length === 0) return { ok: false, message: "Tap at least one screen on this panel to add it." }
-  if (selected.some((id) => !all.includes(id))) {
-    return { ok: false, message: "You can only select screens from the panel you have selected." }
-  }
-  if (!selectionIsRectangle(computer, picked)) {
-    return { ok: false, message: "Those screens need to form one solid block." }
-  }
+  const checked = validateViewBuckets(computer, buckets)
+  if (!checked.ok) return checked
   const views = readCustomViews()
   if (views.filter((view) => view.computer === computer).length >= 12) {
     return { ok: false, message: "Remove a custom view before adding another." }
@@ -79,7 +72,7 @@ export function addCustomView(
     id: `custom-${crypto.randomUUID()}`,
     name: display,
     computer,
-    groups: groupsFromSelection(computer, picked),
+    groups: groupsFromBuckets(computer, checked.buckets),
   }
   const next = [...views, view]
   writeCustomViews(next)

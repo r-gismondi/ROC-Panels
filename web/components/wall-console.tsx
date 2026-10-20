@@ -9,9 +9,10 @@ import { Slider } from "@/components/ui/slider"
 import { C_CONNECT_ID, C_CONNECT_NAME, C_CONNECT_URL, programIconClass, programIconSrc } from "@/lib/c-connect"
 import {
   CUSTOM_VIEW_SCREENS,
-  groupsFromSelection,
+  groupsFromBuckets,
   isCustomViewId,
-  selectionIsRectangle,
+  MAX_VIEW_GROUPS,
+  validateViewBuckets,
   type CustomView,
 } from "@/lib/custom-view-model"
 import { GROUP_COLOR, presetZones, type Preset, type Screen } from "@/lib/preset-zones"
@@ -206,7 +207,8 @@ export function WallConsole() {
   const [linkReplace, setLinkReplace] = useState(false)
   const [viewEditorOpen, setViewEditorOpen] = useState(false)
   const [viewName, setViewName] = useState("")
-  const [viewPicked, setViewPicked] = useState<string[]>([])
+  const [viewBuckets, setViewBuckets] = useState<string[][]>([[]])
+  const [viewBucketIndex, setViewBucketIndex] = useState(0)
   const [viewReplace, setViewReplace] = useState(false)
   const [viewBusy, setViewBusy] = useState(false)
   const [viewStatus, setViewStatus] = useState("")
@@ -456,9 +458,11 @@ export function WallConsole() {
   const pending3 = computer3Preset !== "" && computer3Preset !== computer3Applied
   const viewComputer: "101" | "102" | "103" = panel === 1 ? "101" : computer3Scope ? "103" : "102"
   const viewAllowed = CUSTOM_VIEW_SCREENS[viewComputer]
+  const viewAssigned = viewBuckets.flat()
+  const viewCurrentBucket = viewBuckets[viewBucketIndex] ?? []
   const draftViewPreset =
-    viewEditorOpen && viewPicked.length > 0
-      ? ({ id: "draft", name: viewName.trim() || "Custom", groups: groupsFromSelection(viewComputer, viewPicked) } satisfies Preset)
+    viewEditorOpen && viewAssigned.length > 0
+      ? ({ id: "draft", name: viewName.trim() || "Custom", groups: groupsFromBuckets(viewComputer, viewBuckets) } satisfies Preset)
       : null
   const current = SCREENS.find((screen) => screen.id === selection.screen)
   if (current) screenHold.current = current
@@ -894,9 +898,13 @@ export function WallConsole() {
           setPanelGuardOpen(true)
           return
         }
-        setViewPicked((current) =>
-          current.includes(next.screen) ? current.filter((id) => id !== next.screen) : [...current, next.screen],
-        )
+        setViewBuckets((current) => {
+          const inCurrent = (current[viewBucketIndex] ?? []).includes(next.screen)
+          const nextBuckets = current.map((bucket) => bucket.filter((id) => id !== next.screen))
+          while (nextBuckets.length <= viewBucketIndex) nextBuckets.push([])
+          if (!inCurrent) nextBuckets[viewBucketIndex] = [...(nextBuckets[viewBucketIndex] ?? []), next.screen]
+          return nextBuckets.length > 0 ? nextBuckets : [[]]
+        })
         setViewStatus("")
         return
       }
@@ -923,9 +931,10 @@ export function WallConsole() {
   function openViewEditor() {
     setViewEditorOpen(true)
     setViewName("")
-    setViewPicked([])
+    setViewBuckets([[]])
+    setViewBucketIndex(0)
     setViewReplace(false)
-    setViewStatus("Type a name, then tap screens on this panel to add them.")
+    setViewStatus("Type a name, paint group 1, then tap New group for another Edge window.")
     requestAnimationFrame(() => {
       const input = viewNameRef.current
       if (!input) return
@@ -934,6 +943,20 @@ export function WallConsole() {
       input.setSelectionRange(end, end)
       viewCaret.current = { start: end, end }
     })
+  }
+
+  function addViewGroup() {
+    if (viewBuckets.length >= MAX_VIEW_GROUPS) {
+      setViewStatus(`This view already has ${MAX_VIEW_GROUPS} groups.`)
+      return
+    }
+    if ((viewBuckets[viewBucketIndex] ?? []).length === 0) {
+      setViewStatus("Add screens to this group before starting another.")
+      return
+    }
+    setViewBuckets((current) => [...current, []])
+    setViewBucketIndex(viewBuckets.length)
+    setViewStatus(`Paint group ${viewBuckets.length + 1}. Tap screens that should share that Edge window.`)
   }
 
   function insertViewToken(token: string) {
@@ -972,12 +995,9 @@ export function WallConsole() {
       setViewStatus("Type a name for this view.")
       return
     }
-    if (viewPicked.length === 0) {
-      setViewStatus("Tap at least one screen on this panel to add it.")
-      return
-    }
-    if (!selectionIsRectangle(viewComputer, viewPicked)) {
-      setViewStatus("Those screens need to form one solid block.")
+    const checked = validateViewBuckets(viewComputer, viewBuckets)
+    if (!checked.ok) {
+      setViewStatus(checked.message)
       return
     }
     setViewBusy(true)
@@ -986,7 +1006,7 @@ export function WallConsole() {
       const response = await fetch("/api/views", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "add", computer: viewComputer, name: viewName, screens: viewPicked }),
+        body: JSON.stringify({ action: "add", computer: viewComputer, name: viewName, groups: checked.buckets }),
       })
       const body = (await response.json().catch(() => null)) as {
         views?: CustomView[]
@@ -1611,7 +1631,7 @@ export function WallConsole() {
           selection={selection}
           power={power}
           thumbStamp={thumbStamp}
-          pickedIds={viewEditorOpen && viewComputer === "101" ? viewPicked : []}
+          pickedIds={viewEditorOpen && viewComputer === "101" ? viewCurrentBucket : []}
           onSelect={choose}
           onPress={pressScreen}
           onOpenRemote={() => askRemote("101")}
@@ -1662,7 +1682,7 @@ export function WallConsole() {
               selection={selection}
               power={power}
               thumbStamp={thumbStamp}
-              pickedIds={viewEditorOpen && viewComputer === "102" ? viewPicked : []}
+              pickedIds={viewEditorOpen && viewComputer === "102" ? viewCurrentBucket : []}
               onSelectFrame={() => {
                 if (viewEditorOpen && viewComputer !== "102") {
                   setPanelGuardOpen(true)
@@ -1686,7 +1706,7 @@ export function WallConsole() {
               selection={selection}
               power={power}
               thumbStamp={thumbStamp}
-              pickedIds={viewEditorOpen && viewComputer === "103" ? viewPicked : []}
+              pickedIds={viewEditorOpen && viewComputer === "103" ? viewCurrentBucket : []}
               onSelectFrame={() => {
                 if (viewEditorOpen && viewComputer !== "103") {
                   setPanelGuardOpen(true)
@@ -2074,7 +2094,7 @@ export function WallConsole() {
               Create custom
             </p>
             <p className="mt-1 text-xs text-cyan-100/70">
-              Name this view, then tap screens on {GROUP_LABEL[viewComputer]} to add them. Selected screens share one Edge window.
+              Name this view, then paint Edge window groups on {GROUP_LABEL[viewComputer]}. Use New group for another window.
             </p>
             <div className="mt-3">
               <TypeField
@@ -2096,10 +2116,34 @@ export function WallConsole() {
                 }}
               />
             </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {viewBuckets.map((bucket, index) => (
+                <GlowButton key={`group-${index}`} active={index === viewBucketIndex} onClick={() => setViewBucketIndex(index)}>
+                  <span className="flex items-center gap-2">
+                    <span
+                      className="inline-block h-3 w-3 rounded-sm border"
+                      style={{
+                        borderColor: GROUP_COLOR[index % GROUP_COLOR.length],
+                        background: `${GROUP_COLOR[index % GROUP_COLOR.length]}99`,
+                      }}
+                    />
+                    Group {index + 1}
+                    {bucket.length > 0 ? ` · ${bucket.map(screenNumber).join(",")}` : ""}
+                  </span>
+                </GlowButton>
+              ))}
+              <GlowButton onClick={addViewGroup}>New group</GlowButton>
+            </div>
             <p className="mt-2 text-xs text-cyan-100/80">
-              {viewPicked.length === 0
-                ? "No screens added yet."
-                : `Added screens ${viewPicked.map(screenNumber).sort((a, b) => Number(a) - Number(b)).join(", ")}.`}
+              {viewCurrentBucket.length === 0
+                ? `Group ${viewBucketIndex + 1} is empty. Tap screens that should share this Edge window.`
+                : `Group ${viewBucketIndex + 1}: screens ${viewCurrentBucket
+                    .map(screenNumber)
+                    .sort((a, b) => Number(a) - Number(b))
+                    .join(", ")}.`}
+              {viewAssigned.length < viewAllowed.length
+                ? " Screens left out each get their own window."
+                : ""}
             </p>
             {viewStatus ? <p className="mt-1 text-xs text-cyan-100/70">{viewStatus}</p> : null}
             <div className="mt-3">
@@ -2586,7 +2630,7 @@ function PresetRow({
           <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{label}</p>
           <p className="text-xs text-cyan-100/80">
             {creating
-              ? "Name the view below, then tap screens on this panel to add them."
+              ? "Name the view, paint a group, then tap New group for another Edge window."
               : pending
                 ? "Preview on the screens. Confirm opens Edge."
                 : "Choose a preset to preview it on the screens."}
