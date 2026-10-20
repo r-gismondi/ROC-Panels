@@ -7,6 +7,13 @@ import { PresetCoach } from "@/components/preset-coach"
 import { Reveal, StatusLine, motionStyle, usePresence } from "@/components/presence"
 import { Slider } from "@/components/ui/slider"
 import { C_CONNECT_ID, C_CONNECT_NAME, C_CONNECT_URL, programIconClass, programIconSrc } from "@/lib/c-connect"
+import {
+  CUSTOM_VIEW_SCREENS,
+  groupsFromSelection,
+  isCustomViewId,
+  selectionIsRectangle,
+  type CustomView,
+} from "@/lib/custom-view-model"
 import { GROUP_COLOR, presetZones, type Preset, type Screen } from "@/lib/preset-zones"
 
 type PanelId = 1 | 2
@@ -14,6 +21,10 @@ type PanelId = 1 | 2
 type PinnedApp = { id: string; name: string; path: string; locked?: boolean }
 type SavedLink = { id: string; name: string; url: string }
 type DragItem = { kind: "program" | "link"; id: string; x: number; y: number; over: string }
+
+function asPreset(view: CustomView): Preset {
+  return { id: view.id, name: view.name, groups: view.groups }
+}
 
 const C_CONNECT_PIN: PinnedApp = { id: C_CONNECT_ID, name: C_CONNECT_NAME, path: C_CONNECT_URL, locked: true }
 
@@ -177,6 +188,7 @@ export function WallConsole() {
   const [applied, setApplied] = useState<Record<PanelId, string>>({ 1: "", 2: "" })
   const [computer3Preset, setComputer3Preset] = useState("")
   const [computer3Applied, setComputer3Applied] = useState("")
+  const [customViews, setCustomViews] = useState<CustomView[]>([])
   const [power, setPower] = useState<Record<string, boolean>>(initialPower)
   const [brightness, setBrightness] = useState<Record<string, number>>(initialBrightness)
   const [layoutStatus, setLayoutStatus] = useState("Preset buttons preview the layout here. Confirm opens Edge on these screens.")
@@ -192,10 +204,19 @@ export function WallConsole() {
   const [linkUrl, setLinkUrl] = useState("")
   const [linkField, setLinkField] = useState<"name" | "url">("name")
   const [linkReplace, setLinkReplace] = useState(false)
+  const [viewEditorOpen, setViewEditorOpen] = useState(false)
+  const [viewName, setViewName] = useState("")
+  const [viewPicked, setViewPicked] = useState<string[]>([])
+  const [viewReplace, setViewReplace] = useState(false)
+  const [viewBusy, setViewBusy] = useState(false)
+  const [viewStatus, setViewStatus] = useState("")
+  const [panelGuardOpen, setPanelGuardOpen] = useState(false)
   const [linkBusy, setLinkBusy] = useState(false)
   const linkNameRef = useRef<HTMLInputElement | null>(null)
   const linkUrlRef = useRef<HTMLInputElement | null>(null)
   const linkCaret = useRef({ start: 0, end: 0 })
+  const viewNameRef = useRef<HTMLInputElement | null>(null)
+  const viewCaret = useRef({ start: 0, end: 0 })
   const addressInputRef = useRef<HTMLInputElement | null>(null)
   const addressCaret = useRef({ start: 0, end: 0 })
   const [remoteAsk, setRemoteAsk] = useState<Computer | "">("")
@@ -229,6 +250,8 @@ export function WallConsole() {
       if (event.data !== "home") return
       setKeyboardOpen(false)
       setLinkEditorOpen(false)
+      setViewEditorOpen(false)
+      setPanelGuardOpen(false)
       setRemoteAsk("")
       scrollArea.current?.scrollTo({ top: 0, behavior: "smooth" })
     }
@@ -317,12 +340,18 @@ export function WallConsole() {
     let cancel = false
     void (async () => {
       try {
+        const viewsResponse = await fetch("/api/views")
+        const viewsBody = (await viewsResponse.json()) as { views?: CustomView[] }
+        const views = viewsBody.views ?? []
+        if (!cancel) setCustomViews(views)
         const response = await fetch("/api/layout", { cache: "no-store" })
         const body = (await response.json()) as { layouts?: Record<string, string> }
         if (cancel || !body.layouts) return
-        const panel1 = savedPreset(body.layouts["101"], PRESETS[1].map((item) => item.id))
-        const panel2 = savedPreset(body.layouts["102"], PRESETS[2].map((item) => item.id))
-        const computer3 = savedPreset(body.layouts["103"], COMPUTER_3_PRESETS.map((item) => item.id))
+        const customIds = (computer: "101" | "102" | "103") =>
+          views.filter((view) => view.computer === computer).map((view) => view.id)
+        const panel1 = savedPreset(body.layouts["101"], [...PRESETS[1].map((item) => item.id), ...customIds("101")])
+        const panel2 = savedPreset(body.layouts["102"], [...PRESETS[2].map((item) => item.id), ...customIds("102")])
+        const computer3 = savedPreset(body.layouts["103"], [...COMPUTER_3_PRESETS.map((item) => item.id), ...customIds("103")])
         if (panel1) {
           setPreset((current) => ({ ...current, 1: panel1 }))
           setApplied((current) => ({ ...current, 1: panel1 }))
@@ -416,11 +445,21 @@ export function WallConsole() {
   const shownBrightness = sameBrightness
     ? brightnessValues[0]
     : Math.round(brightnessValues.reduce((sum, value) => sum + value, 0) / brightnessValues.length)
-  const computer2Preset = chosenPreset(PRESETS[2], preset[2])
-  const activeComputer3Preset = chosenPreset(COMPUTER_3_PRESETS, computer3Preset) ?? COMPUTER_3_PRESETS[0]
+  const customFor = (computer: "101" | "102" | "103") => customViews.filter((view) => view.computer === computer).map(asPreset)
+  const panel1Presets = [...PRESETS[1], ...customFor("101")]
+  const panel2Presets = [...PRESETS[2], ...customFor("102")]
+  const computer3Presets = [...COMPUTER_3_PRESETS, ...customFor("103")]
+  const computer2Preset = chosenPreset(panel2Presets, preset[2])
+  const activeComputer3Preset = chosenPreset(computer3Presets, computer3Preset) ?? COMPUTER_3_PRESETS[0]
   const pending1 = preset[1] !== "" && preset[1] !== applied[1]
   const pending2 = preset[2] !== "" && preset[2] !== applied[2]
   const pending3 = computer3Preset !== "" && computer3Preset !== computer3Applied
+  const viewComputer: "101" | "102" | "103" = panel === 1 ? "101" : computer3Scope ? "103" : "102"
+  const viewAllowed = CUSTOM_VIEW_SCREENS[viewComputer]
+  const draftViewPreset =
+    viewEditorOpen && viewPicked.length > 0
+      ? ({ id: "draft", name: viewName.trim() || "Custom", groups: groupsFromSelection(viewComputer, viewPicked) } satisfies Preset)
+      : null
   const current = SCREENS.find((screen) => screen.id === selection.screen)
   if (current) screenHold.current = current
   const addressPresence = usePresence(Boolean(current))
@@ -550,7 +589,7 @@ export function WallConsole() {
     panel === 1
       ? {
           label: "PANEL 1 PRESETS",
-          presets: PRESETS[1],
+          presets: panel1Presets,
           activeId: preset[1],
           appliedId: applied[1],
           computer: "101" as const,
@@ -560,7 +599,7 @@ export function WallConsole() {
       : computer3Scope
         ? {
             label: "SCREENS 13 AND 18",
-            presets: COMPUTER_3_PRESETS,
+            presets: computer3Presets,
             activeId: computer3Preset,
             appliedId: computer3Applied,
             computer: "103" as const,
@@ -569,7 +608,7 @@ export function WallConsole() {
           }
         : {
             label: "SCREENS 9–12, 14–17",
-            presets: PRESETS[2],
+            presets: panel2Presets,
             activeId: preset[2],
             appliedId: applied[2],
             computer: "102" as const,
@@ -601,7 +640,7 @@ export function WallConsole() {
   function zoneFor(screenId: string) {
     const computer = COMPUTER_OF[screenId]
     const layoutId = computer === "101" ? applied[1] : computer === "102" ? applied[2] : computer3Applied
-    const list = computer === "103" ? COMPUTER_3_PRESETS : computer === "101" ? PRESETS[1] : PRESETS[2]
+    const list = computer === "103" ? computer3Presets : computer === "101" ? panel1Presets : panel2Presets
     const active = list.find((item) => item.id === layoutId)
     const ids = computer === "103" ? COMPUTER_3_IDS : computer === "101" ? IDS[1] : COMPUTER_2_IDS
     const group = active?.groups[screenId]
@@ -731,10 +770,10 @@ export function WallConsole() {
   const addressComputer = addressScreen ? COMPUTER_OF[addressScreen.id] : null
   const addressPreset =
     addressComputer === "103"
-      ? presetById(COMPUTER_3_PRESETS, computer3Applied, "independent")
+      ? presetById(computer3Presets, computer3Applied, "independent")
       : addressComputer === "101"
-        ? presetById(PRESETS[1], applied[1], "focus")
-        : presetById(PRESETS[2], applied[2], "focus")
+        ? presetById(panel1Presets, applied[1], "focus")
+        : presetById(panel2Presets, applied[2], "focus")
   const addressIds = addressComputer === "103" ? COMPUTER_3_IDS : addressComputer === "101" ? IDS[1] : COMPUTER_2_IDS
   const zoneIds = addressScreen ? addressIds.filter((id) => addressPreset.groups[id] === addressPreset.groups[addressScreen.id]) : []
   const shownZone = zoneIds.length > 0 ? zoneIds : addressScreen ? [addressScreen.id] : []
@@ -849,6 +888,28 @@ export function WallConsole() {
   }
 
   function choose(next: Selection) {
+    if (viewEditorOpen) {
+      if (/^TV\d+$/.test(next.screen)) {
+        if (!viewAllowed.includes(next.screen)) {
+          setPanelGuardOpen(true)
+          return
+        }
+        setViewPicked((current) =>
+          current.includes(next.screen) ? current.filter((id) => id !== next.screen) : [...current, next.screen],
+        )
+        setViewStatus("")
+        return
+      }
+      if (next.panel === 1 && viewComputer !== "101") {
+        setPanelGuardOpen(true)
+        return
+      }
+      if (next.panel === 2 && viewComputer === "101") {
+        setPanelGuardOpen(true)
+        return
+      }
+      return
+    }
     setSelection(next)
     const pin = launchPin.current
     const linkId = launchLinkId.current
@@ -857,6 +918,129 @@ export function WallConsole() {
     if (!/^TV\d+$/.test(next.screen)) return
     if (pin) void openProgram(pin, next.screen)
     else if (linkId) void openSavedLink(linkId, next.screen)
+  }
+
+  function openViewEditor() {
+    setViewEditorOpen(true)
+    setViewName("")
+    setViewPicked([])
+    setViewReplace(false)
+    setViewStatus("Type a name, then tap screens on this panel to add them.")
+    requestAnimationFrame(() => {
+      const input = viewNameRef.current
+      if (!input) return
+      input.focus()
+      const end = input.value.length
+      input.setSelectionRange(end, end)
+      viewCaret.current = { start: end, end }
+    })
+  }
+
+  function insertViewToken(token: string) {
+    const input = viewNameRef.current
+    const start = input?.selectionStart ?? viewCaret.current.start
+    const end = input?.selectionEnd ?? viewCaret.current.end
+    const next = insertAtCaret(viewName, token, start, end, viewReplace)
+    setViewName(next.value.slice(0, 40))
+    setViewReplace(false)
+    viewCaret.current = { start: next.caret, end: next.caret }
+    requestAnimationFrame(() => {
+      if (!input) return
+      input.focus()
+      input.setSelectionRange(next.caret, next.caret)
+    })
+  }
+
+  function backspaceView() {
+    const input = viewNameRef.current
+    const start = input?.selectionStart ?? viewCaret.current.start
+    const end = input?.selectionEnd ?? viewCaret.current.end
+    const next = backspaceAtCaret(viewName, start, end)
+    setViewName(next.value)
+    setViewReplace(false)
+    viewCaret.current = { start: next.caret, end: next.caret }
+    requestAnimationFrame(() => {
+      if (!input) return
+      input.focus()
+      input.setSelectionRange(next.caret, next.caret)
+    })
+  }
+
+  async function saveCustomView() {
+    if (viewBusy) return
+    if (!viewName.trim()) {
+      setViewStatus("Type a name for this view.")
+      return
+    }
+    if (viewPicked.length === 0) {
+      setViewStatus("Tap at least one screen on this panel to add it.")
+      return
+    }
+    if (!selectionIsRectangle(viewComputer, viewPicked)) {
+      setViewStatus("Those screens need to form one solid block.")
+      return
+    }
+    setViewBusy(true)
+    setViewStatus("Saving…")
+    try {
+      const response = await fetch("/api/views", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "add", computer: viewComputer, name: viewName, screens: viewPicked }),
+      })
+      const body = (await response.json().catch(() => null)) as {
+        views?: CustomView[]
+        selectedId?: string
+        error?: string
+      } | null
+      if (!response.ok || !body?.views || !body.selectedId) {
+        setViewStatus(body?.error || "The view did not save.")
+        return
+      }
+      setCustomViews(body.views)
+      const id = body.selectedId
+      const name = body.views.find((view) => view.id === id)?.name ?? viewName.trim()
+      if (viewComputer === "103") setComputer3Preset(id)
+      else if (viewComputer === "101") setPreset((current) => ({ ...current, 1: id }))
+      else setPreset((current) => ({ ...current, 2: id }))
+      setViewEditorOpen(false)
+      setLayoutStatus(`Previewing ${name} on ${GROUP_LABEL[viewComputer]}. Confirm to open Edge, or cancel.`)
+    } catch {
+      setViewStatus("Could not save the view.")
+    } finally {
+      setViewBusy(false)
+    }
+  }
+
+  async function removeCustomView(id: string) {
+    try {
+      const response = await fetch("/api/views", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "remove", id }),
+      })
+      const body = (await response.json().catch(() => null)) as { views?: CustomView[] } | null
+      if (!response.ok || !body?.views) {
+        setLayoutStatus("The custom view could not be removed.")
+        return
+      }
+      setCustomViews(body.views)
+      if (preset[1] === id) {
+        setPreset((current) => ({ ...current, 1: applied[1] === id ? "" : applied[1] }))
+        if (applied[1] === id) setApplied((current) => ({ ...current, 1: "" }))
+      }
+      if (preset[2] === id) {
+        setPreset((current) => ({ ...current, 2: applied[2] === id ? "" : applied[2] }))
+        if (applied[2] === id) setApplied((current) => ({ ...current, 2: "" }))
+      }
+      if (computer3Preset === id) {
+        setComputer3Preset(computer3Applied === id ? "" : computer3Applied)
+        if (computer3Applied === id) setComputer3Applied("")
+      }
+      setLayoutStatus("Removed the custom view.")
+    } catch {
+      setLayoutStatus("Could not remove the custom view.")
+    }
   }
 
   function rememberApplied(computer: "101" | "102" | "103", id: string) {
@@ -876,7 +1060,9 @@ export function WallConsole() {
     try {
       const response = await fetch("/api/layout", { cache: "no-store" })
       const body = (await response.json()) as { layouts?: Record<string, string> }
-      const allowed = computer === "103" ? COMPUTER_3_PRESETS.map((item) => item.id) : computer === "101" ? PRESETS[1].map((item) => item.id) : PRESETS[2].map((item) => item.id)
+      const builtins =
+        computer === "103" ? COMPUTER_3_PRESETS.map((item) => item.id) : computer === "101" ? PRESETS[1].map((item) => item.id) : PRESETS[2].map((item) => item.id)
+      const allowed = [...builtins, ...customViews.filter((view) => view.computer === computer).map((view) => view.id)]
       const saved = savedPreset(body.layouts?.[computer], allowed)
       if (saved) rememberApplied(computer, saved)
       return saved
@@ -888,7 +1074,8 @@ export function WallConsole() {
   function zoneForScreen(screenId: string, layoutId: string) {
     const computer = COMPUTER_OF[screenId]
     if (!computer) return [screenId]
-    const list = computer === "103" ? COMPUTER_3_PRESETS : computer === "101" ? PRESETS[1] : PRESETS[2]
+    const list =
+      computer === "103" ? computer3Presets : computer === "101" ? panel1Presets : panel2Presets
     const active = list.find((item) => item.id === layoutId)
     const ids = computer === "103" ? COMPUTER_3_IDS : computer === "101" ? IDS[1] : COMPUTER_2_IDS
     const group = active?.groups[screenId]
@@ -1262,6 +1449,16 @@ export function WallConsole() {
     },
     onEscape: () => setLinkEditorOpen(false),
   })
+  const viewEditorPresence = usePresence(viewEditorOpen)
+  const panelGuardPresence = usePresence(panelGuardOpen)
+  usePhysicalTyping(viewEditorOpen && !panelGuardOpen, {
+    onInsert: insertViewToken,
+    onBackspace: backspaceView,
+    onEnter: () => {
+      void saveCustomView()
+    },
+    onEscape: () => setViewEditorOpen(false),
+  })
   const addressScreenId = addressScreen?.id ?? ""
   useEffect(() => {
     if (!keyboardOpen || !addressScreenId) return
@@ -1270,7 +1467,7 @@ export function WallConsole() {
   const shownPreset = footer.presets.find((item) => item.id === footer.activeId)
   if (previewPending && shownPreset) presetCoachHold.current = { rows: footer.rows, preset: shownPreset }
   const presetCoach = presetCoachHold.current
-  const presetCoachPresence = usePresence(previewPending && Boolean(shownPreset))
+  const presetCoachPresence = usePresence(previewPending && !viewEditorOpen && Boolean(shownPreset))
 
   return (
     <main className="flex h-svh flex-col overflow-hidden bg-[radial-gradient(circle_at_top,#1650c8_0%,#06215f_42%,#03102e_100%)] text-white">
@@ -1409,11 +1606,12 @@ export function WallConsole() {
           title="Panel 1"
           detail="Screens 1–8"
           rows={PANEL_1}
-          preset={chosenPreset(PRESETS[1], preset[1])}
-          pending={pending1}
+          preset={viewComputer === "101" && draftViewPreset ? draftViewPreset : chosenPreset(panel1Presets, preset[1])}
+          pending={pending1 && !viewEditorOpen}
           selection={selection}
           power={power}
           thumbStamp={thumbStamp}
+          pickedIds={viewEditorOpen && viewComputer === "101" ? viewPicked : []}
           onSelect={choose}
           onPress={pressScreen}
           onOpenRemote={() => askRemote("101")}
@@ -1422,7 +1620,14 @@ export function WallConsole() {
         />
 
         <section
-          onClick={() => setSelection({ panel: 2, screen: "all" })}
+          onClick={() => {
+            if (viewEditorOpen && viewComputer === "101") {
+              setPanelGuardOpen(true)
+              return
+            }
+            if (viewEditorOpen) return
+            setSelection({ panel: 2, screen: "all" })
+          }}
           className={`flex h-full min-h-0 cursor-pointer flex-col rounded-2xl border bg-[#071a4d]/70 p-3 pb-5 shadow-[0_0_24px_rgba(30,120,255,0.18)] ${
             (selection.panel === 2 && selection.screen === "all") || everyScreen
               ? "border-white shadow-[0_0_24px_rgba(180,230,255,0.35)]"
@@ -1451,13 +1656,20 @@ export function WallConsole() {
               className="shrink-0"
               style={{ width: "calc(4 * var(--tile) + 3 * var(--seam) + 2 * var(--pad))" }}
               rows={COMPUTER_2}
-              preset={computer2Preset}
-              pending={pending2}
+              preset={viewComputer === "102" && draftViewPreset ? draftViewPreset : computer2Preset}
+              pending={pending2 && !viewEditorOpen}
               selected={computer2Scope}
               selection={selection}
               power={power}
               thumbStamp={thumbStamp}
-              onSelectFrame={() => setSelection({ panel: 2, screen: "computer-2" })}
+              pickedIds={viewEditorOpen && viewComputer === "102" ? viewPicked : []}
+              onSelectFrame={() => {
+                if (viewEditorOpen && viewComputer !== "102") {
+                  setPanelGuardOpen(true)
+                  return
+                }
+                setSelection({ panel: 2, screen: "computer-2" })
+              }}
               onSelectScreen={(screen) => choose({ panel: 2, screen })}
               onPress={pressScreen}
               onOpenRemote={() => askRemote("102")}
@@ -1468,13 +1680,20 @@ export function WallConsole() {
               className="shrink-0"
               style={{ width: "calc(var(--tile) + 2 * var(--pad))" }}
               rows={COMPUTER_3}
-              preset={activeComputer3Preset}
-              pending={pending3}
+              preset={viewComputer === "103" && draftViewPreset ? draftViewPreset : activeComputer3Preset}
+              pending={pending3 && !viewEditorOpen}
               selected={computer3Scope}
               selection={selection}
               power={power}
               thumbStamp={thumbStamp}
-              onSelectFrame={() => setSelection({ panel: 2, screen: "computer-3" })}
+              pickedIds={viewEditorOpen && viewComputer === "103" ? viewPicked : []}
+              onSelectFrame={() => {
+                if (viewEditorOpen && viewComputer !== "103") {
+                  setPanelGuardOpen(true)
+                  return
+                }
+                setSelection({ panel: 2, screen: "computer-3" })
+              }}
               onSelectScreen={(screen) => choose({ panel: 2, screen })}
               onPress={pressScreen}
               onOpenRemote={() => askRemote("103")}
@@ -1494,8 +1713,12 @@ export function WallConsole() {
           rows={footer.rows}
           presets={footer.presets}
           activeId={footer.activeId}
-          pending={previewPending}
+          pending={previewPending && !viewEditorOpen}
+          creating={viewEditorOpen}
+          onCreate={openViewEditor}
+          onRemove={(id) => void removeCustomView(id)}
           onSelect={(id) => {
+            if (viewEditorOpen) return
             const name = footer.presets.find((item) => item.id === id)?.name ?? id
             if (footer.computer === "103") setComputer3Preset(id)
             else if (footer.computer === "101") setPreset((currentPreset) => ({ ...currentPreset, 1: id }))
@@ -1833,6 +2056,102 @@ export function WallConsole() {
           </div>
         </div>
       ) : null}
+      {viewEditorPresence.mounted ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="view-editor-title"
+          className={`fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-4 pt-2 sm:px-6 ${viewEditorPresence.visible ? "opacity-100" : "opacity-0"} ${viewEditorOpen ? "" : "pointer-events-none"}`}
+          style={motionStyle}
+        >
+          <div
+            data-view-editor
+            className={`w-full max-w-3xl rounded-2xl border border-cyan-300/80 bg-[#071a4d] px-5 py-4 shadow-[0_0_40px_rgba(80,200,255,0.25)] ${viewEditorPresence.visible ? "translate-y-0" : "translate-y-4"}`}
+            style={motionStyle}
+          >
+            <p className="text-[11px] tracking-[0.18em] text-cyan-100/70">CUSTOM VIEW</p>
+            <p id="view-editor-title" className="mt-1 text-xl font-semibold tracking-wide">
+              Create custom
+            </p>
+            <p className="mt-1 text-xs text-cyan-100/70">
+              Name this view, then tap screens on {GROUP_LABEL[viewComputer]} to add them. Selected screens share one Edge window.
+            </p>
+            <div className="mt-3">
+              <TypeField
+                label="VIEW NAME"
+                value={viewName}
+                active
+                maxLength={40}
+                inputRef={(node) => {
+                  viewNameRef.current = node
+                }}
+                onFocus={() => undefined}
+                onChange={(value) => {
+                  setViewName(value.slice(0, 40))
+                  setViewReplace(false)
+                }}
+                onCaret={(start, end) => {
+                  viewCaret.current = { start, end }
+                  if (start === end) setViewReplace(false)
+                }}
+              />
+            </div>
+            <p className="mt-2 text-xs text-cyan-100/80">
+              {viewPicked.length === 0
+                ? "No screens added yet."
+                : `Added screens ${viewPicked.map(screenNumber).sort((a, b) => Number(a) - Number(b)).join(", ")}.`}
+            </p>
+            {viewStatus ? <p className="mt-1 text-xs text-cyan-100/70">{viewStatus}</p> : null}
+            <div className="mt-3">
+              <OnScreenKeyboard
+                onInsert={insertViewToken}
+                onBackspace={backspaceView}
+                onClear={() => {
+                  setViewName("")
+                  setViewReplace(false)
+                  viewCaret.current = { start: 0, end: 0 }
+                }}
+                onEnter={() => void saveCustomView()}
+                footer={
+                  <div className="mt-2 grid grid-cols-2 gap-3">
+                    <GlowButton onClick={() => setViewEditorOpen(false)}>Cancel</GlowButton>
+                    <GlowButton active onClick={() => void saveCustomView()}>
+                      {viewBusy ? "Saving…" : "Save view"}
+                    </GlowButton>
+                  </div>
+                }
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {panelGuardPresence.mounted ? (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="panel-guard-title"
+          className={`fixed inset-0 z-50 flex items-center justify-center bg-[#03102e]/60 backdrop-blur-[2px] px-4 ${panelGuardPresence.visible ? "opacity-100" : "opacity-0"} ${panelGuardOpen ? "" : "pointer-events-none"}`}
+          style={motionStyle}
+        >
+          <div
+            className={`w-[min(28rem,96vw)] rounded-2xl border border-cyan-300/80 bg-[#071a4d] px-6 py-6 shadow-[0_0_40px_rgba(80,200,255,0.25)] ${panelGuardPresence.visible ? "translate-y-0 scale-100" : "translate-y-4 scale-95"}`}
+            style={motionStyle}
+          >
+            <p className="text-[11px] tracking-[0.18em] text-cyan-100/70">CUSTOM VIEW</p>
+            <p id="panel-guard-title" className="mt-1 text-xl font-semibold tracking-wide">
+              Wrong panel
+            </p>
+            <p className="mt-3 text-sm leading-6 text-cyan-50/90">
+              You can only select screens from the panel you have selected.
+            </p>
+            <div className="mt-5">
+              <GlowButton active onClick={() => setPanelGuardOpen(false)}>
+                OK
+              </GlowButton>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   )
 }
@@ -1847,6 +2166,7 @@ function PanelFrame({
   selection,
   power,
   thumbStamp,
+  pickedIds = [],
   onSelect,
   onPress,
   onOpenRemote,
@@ -1862,6 +2182,7 @@ function PanelFrame({
   selection: Selection
   power: Record<string, boolean>
   thumbStamp: number
+  pickedIds?: string[]
   onSelect: (selection: Selection) => void
   onPress: () => void
   onOpenRemote: () => void
@@ -1897,6 +2218,7 @@ function PanelFrame({
         selection={selection}
         power={power}
         thumbStamp={thumbStamp}
+        pickedIds={pickedIds}
         onSelect={(screen) => onSelect({ panel, screen })}
         onPress={onPress}
         onOpenRemote={onOpenRemote}
@@ -1917,6 +2239,7 @@ function ComputerFrame({
   selection,
   power,
   thumbStamp,
+  pickedIds = [],
   onSelectFrame,
   onSelectScreen,
   onPress,
@@ -1933,6 +2256,7 @@ function ComputerFrame({
   selection: Selection
   power: Record<string, boolean>
   thumbStamp: number
+  pickedIds?: string[]
   onSelectFrame: () => void
   onSelectScreen: (screen: string) => void
   onPress: () => void
@@ -1956,6 +2280,7 @@ function ComputerFrame({
         selection={selection}
         power={power}
         thumbStamp={thumbStamp}
+        pickedIds={pickedIds}
         onSelect={onSelectScreen}
         onPress={onPress}
         onOpenRemote={onOpenRemote}
@@ -1973,6 +2298,7 @@ function ScreenWall({
   selection,
   power,
   thumbStamp,
+  pickedIds = [],
   onSelect,
   onPress,
   onOpenRemote,
@@ -1985,6 +2311,7 @@ function ScreenWall({
   selection: Selection
   power: Record<string, boolean>
   thumbStamp: number
+  pickedIds?: string[]
   onSelect: (screenId: string) => void
   onPress: () => void
   onOpenRemote: () => void
@@ -2012,6 +2339,7 @@ function ScreenWall({
               screen={screen}
               preset={preset}
               selected={selection.screen === screen.id}
+              picked={pickedIds.includes(screen.id)}
               on={power[screen.id]}
               thumbStamp={thumbStamp}
               labelTop={columns === 1 && r === rowCount / 2 - 1}
@@ -2139,6 +2467,7 @@ function ScreenButton({
   screen,
   preset,
   selected,
+  picked = false,
   on,
   thumbStamp,
   labelTop = false,
@@ -2149,6 +2478,7 @@ function ScreenButton({
   screen: Screen
   preset: Preset | null
   selected: boolean
+  picked?: boolean
   on: boolean
   thumbStamp: number
   labelTop?: boolean
@@ -2175,9 +2505,9 @@ function ScreenButton({
       }}
       className="relative block aspect-video w-full min-w-0 touch-manipulation overflow-hidden rounded-sm border text-center transition-[border-color,box-shadow,background-color] duration-200"
       style={{
-        borderColor: hot || selected ? "#ffffff" : color,
+        borderColor: hot || picked || selected ? "#ffffff" : color,
         background: on ? `${color}33` : "rgba(0,0,0,0.45)",
-        boxShadow: hot ? "0 0 18px #7ee8ff" : selected ? `0 0 16px ${color}` : undefined,
+        boxShadow: hot || picked ? "0 0 18px #7ee8ff" : selected ? `0 0 16px ${color}` : undefined,
       }}
     >
       <span className="absolute inset-0">
@@ -2225,6 +2555,9 @@ function PresetRow({
   presets,
   activeId,
   pending,
+  creating,
+  onCreate,
+  onRemove,
   onSelect,
   onConfirm,
   onCancel,
@@ -2236,18 +2569,28 @@ function PresetRow({
   presets: Preset[]
   activeId: string
   pending: boolean
+  creating: boolean
+  onCreate: () => void
+  onRemove: (id: string) => void
   onSelect: (id: string) => void
   onConfirm: () => void
   onCancel: () => void
   onClose: () => void
   onCloseAll: () => void
 }) {
+  const columns = presets.length + 1 > 2 ? "sm:grid-cols-3 lg:grid-cols-6" : "sm:grid-cols-2 sm:max-w-md"
   return (
     <div>
       <div className="mb-2 flex items-end justify-between gap-3">
         <div>
           <p className="text-[11px] tracking-[0.2em] text-cyan-100/70">{label}</p>
-          <p className="text-xs text-cyan-100/80">{pending ? "Preview on the screens. Confirm opens Edge." : "Choose a preset to preview it on the screens."}</p>
+          <p className="text-xs text-cyan-100/80">
+            {creating
+              ? "Name the view below, then tap screens on this panel to add them."
+              : pending
+                ? "Preview on the screens. Confirm opens Edge."
+                : "Choose a preset to preview it on the screens."}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <GlowButton tone="alert" onClick={onClose}>
@@ -2258,15 +2601,36 @@ function PresetRow({
           </GlowButton>
         </div>
       </div>
-      <div className={`grid grid-cols-2 gap-2 ${presets.length > 2 ? "sm:grid-cols-5" : "sm:grid-cols-2 sm:max-w-md"}`}>
+      <div className={`grid grid-cols-2 gap-2 ${columns}`}>
         {presets.map((item) => (
-          <GlowButton key={item.id} active={activeId !== "" && item.id === activeId} onClick={() => onSelect(item.id)}>
-            <span className="flex flex-col items-center gap-1.5 py-2">
-              <PresetGlyph rows={rows} preset={item} />
-              <span>{item.name}</span>
-            </span>
-          </GlowButton>
+          <div key={item.id} className="relative">
+            <GlowButton active={activeId !== "" && item.id === activeId} onClick={() => onSelect(item.id)}>
+              <span className="flex flex-col items-center gap-1.5 py-2">
+                <PresetGlyph rows={rows} preset={item} />
+                <span>{item.name}</span>
+              </span>
+            </GlowButton>
+            {isCustomViewId(item.id) ? (
+              <button
+                type="button"
+                aria-label={`Remove ${item.name}`}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onRemove(item.id)
+                }}
+                className="absolute -right-1 -top-1 flex h-7 w-7 items-center justify-center rounded-full border border-cyan-200/50 bg-[#0a2f86] text-sm leading-none text-cyan-50"
+              >
+                ×
+              </button>
+            ) : null}
+          </div>
         ))}
+        <GlowButton active={creating} onClick={onCreate}>
+          <span className="flex flex-col items-center gap-1.5 py-2">
+            <span className="flex h-7 w-7 items-center justify-center rounded-sm border border-dashed border-cyan-200/70 text-lg leading-none">+</span>
+            <span>Create custom</span>
+          </span>
+        </GlowButton>
       </div>
       <Reveal show={pending} motion="down" className="mt-2">
         <div className="grid max-w-md grid-cols-2 gap-2">

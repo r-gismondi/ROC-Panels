@@ -3,7 +3,7 @@
 # TV1-TV8. TV9-TV18 are not opened here.
 
 param(
-    [ValidateSet("Independent", "Split", "Focus", "FocusSplit", "Full")]
+    [ValidateSet("Independent", "Split", "Focus", "FocusSplit", "Full", "Custom")]
     [string]$Preset,
     [switch]$Close
 )
@@ -392,10 +392,24 @@ $presets = @{
     )
 }
 
+$activeZones = $null
+if ($Preset -eq "Custom") {
+    $zonesPath = Join-Path $root "custom-zones.json"
+    if (-not (Test-Path -LiteralPath $zonesPath)) { Write-Error "Custom zones were not found."; exit 1 }
+    $raw = Get-Content -LiteralPath $zonesPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $activeZones = @()
+    foreach ($item in @($raw)) {
+        $activeZones += (Zone ([string]$item.title) ([int]$item.x) ([int]$item.y) ([int]$item.w) ([int]$item.h))
+    }
+    if ($activeZones.Count -lt 1) { Write-Error "Custom zones were empty."; exit 1 }
+} else {
+    $activeZones = $presets[$Preset]
+}
+
 $opened = @()
 $known = @{}
 foreach ($existing in @(Get-EdgeHwnds)) { $known[$existing.ToInt64()] = $true }
-foreach ($zone in $presets[$Preset]) {
+foreach ($zone in $activeZones) {
     $drawW = $zone.W
     $drawH = $zone.H
     if (($zone.X + $zone.W) -lt 3840) { $drawW += 2 }
