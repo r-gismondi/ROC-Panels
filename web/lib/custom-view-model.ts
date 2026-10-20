@@ -29,6 +29,34 @@ export function isCustomViewId(id: string) {
   return id.startsWith("custom-")
 }
 
+/** Panel 1 and Panel 2 share the same 4×2 shape; screens 13/18 are a separate layout. */
+export function panelFamily(computer: "101" | "102" | "103"): "wall4x2" | "wall1x2" {
+  return computer === "103" ? "wall1x2" : "wall4x2"
+}
+
+export function canApplyCustomView(view: CustomView, computer: "101" | "102" | "103") {
+  return panelFamily(view.computer) === panelFamily(computer)
+}
+
+/** Remap a saved view onto another computer that shares the same grid shape. */
+export function adaptCustomView(view: CustomView, computer: "101" | "102" | "103"): CustomView | null {
+  if (!canApplyCustomView(view, computer)) return null
+  if (view.computer === computer) return view
+  const from = CUSTOM_VIEW_SCREENS[view.computer]
+  const to = CUSTOM_VIEW_SCREENS[computer]
+  const groups: Record<string, number> = {}
+  from.forEach((id, index) => {
+    const group = view.groups[id]
+    if (group == null || !to[index]) return
+    groups[to[index]] = group
+  })
+  let next = Math.max(-1, ...Object.values(groups), -1) + 1
+  for (const id of to) {
+    if (!(id in groups)) groups[id] = next++
+  }
+  return { ...view, computer, groups }
+}
+
 /** Build preset groups from named buckets; leftover screens each get their own window. */
 export function groupsFromBuckets(computer: "101" | "102" | "103", buckets: string[][]): Record<string, number> {
   const all = CUSTOM_VIEW_SCREENS[computer]

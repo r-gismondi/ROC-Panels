@@ -8,6 +8,8 @@ import { Reveal, StatusLine, motionStyle, usePresence } from "@/components/prese
 import { Slider } from "@/components/ui/slider"
 import { C_CONNECT_ID, C_CONNECT_NAME, C_CONNECT_URL, programIconClass, programIconSrc } from "@/lib/c-connect"
 import {
+  adaptCustomView,
+  canApplyCustomView,
   CUSTOM_VIEW_SCREENS,
   groupsFromBuckets,
   isCustomViewId,
@@ -350,7 +352,7 @@ export function WallConsole() {
         const body = (await response.json()) as { layouts?: Record<string, string> }
         if (cancel || !body.layouts) return
         const customIds = (computer: "101" | "102" | "103") =>
-          views.filter((view) => view.computer === computer).map((view) => view.id)
+          views.filter((view) => canApplyCustomView(view, computer)).map((view) => view.id)
         const panel1 = savedPreset(body.layouts["101"], [...PRESETS[1].map((item) => item.id), ...customIds("101")])
         const panel2 = savedPreset(body.layouts["102"], [...PRESETS[2].map((item) => item.id), ...customIds("102")])
         const computer3 = savedPreset(body.layouts["103"], [...COMPUTER_3_PRESETS.map((item) => item.id), ...customIds("103")])
@@ -447,7 +449,10 @@ export function WallConsole() {
   const shownBrightness = sameBrightness
     ? brightnessValues[0]
     : Math.round(brightnessValues.reduce((sum, value) => sum + value, 0) / brightnessValues.length)
-  const customFor = (computer: "101" | "102" | "103") => customViews.filter((view) => view.computer === computer).map(asPreset)
+  const customFor = (computer: "101" | "102" | "103") =>
+    customViews
+      .filter((view) => canApplyCustomView(view, computer))
+      .map((view) => asPreset(adaptCustomView(view, computer)!))
   const panel1Presets = [...PRESETS[1], ...customFor("101")]
   const panel2Presets = [...PRESETS[2], ...customFor("102")]
   const computer3Presets = [...COMPUTER_3_PRESETS, ...customFor("103")]
@@ -1082,7 +1087,7 @@ export function WallConsole() {
       const body = (await response.json()) as { layouts?: Record<string, string> }
       const builtins =
         computer === "103" ? COMPUTER_3_PRESETS.map((item) => item.id) : computer === "101" ? PRESETS[1].map((item) => item.id) : PRESETS[2].map((item) => item.id)
-      const allowed = [...builtins, ...customViews.filter((view) => view.computer === computer).map((view) => view.id)]
+      const allowed = [...builtins, ...customViews.filter((view) => canApplyCustomView(view, computer)).map((view) => view.id)]
       const saved = savedPreset(body.layouts?.[computer], allowed)
       if (saved) rememberApplied(computer, saved)
       return saved
