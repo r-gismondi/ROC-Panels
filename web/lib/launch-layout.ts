@@ -37,13 +37,14 @@ const BATS: Record<string, string> = {
   "focus-split": "Edge-Focus-Split.bat",
   full: "Edge-Full.bat",
   close: "Edge-Close.bat",
+  "reset-login": "Edge-Reset-Login.bat",
   custom: "Edge-Custom.bat",
 }
 
 const ALLOWED: Record<string, string[]> = {
-  "101": ["independent", "split", "focus", "focus-split", "full", "close"],
-  "102": ["independent", "split", "focus", "focus-split", "full", "close"],
-  "103": ["independent", "full", "close"],
+  "101": ["independent", "split", "focus", "focus-split", "full", "close", "reset-login"],
+  "102": ["independent", "split", "focus", "focus-split", "full", "close", "reset-login"],
+  "103": ["independent", "full", "close", "reset-login"],
 }
 
 export type LaunchResult = { ok: true; message: string; empty?: boolean } | { ok: false; message: string }
@@ -83,7 +84,14 @@ export function layoutCommand(computer: string, preset: string): LayoutCommand |
   const allowed = builtinAllowed(computer)
   const bat = BATS[preset]
   if (!bat || !allowed.includes(preset)) return null
-  const label = preset === "close" ? "Close" : preset === "focus-split" ? "Focus split" : preset.charAt(0).toUpperCase() + preset.slice(1)
+  const label =
+    preset === "close"
+      ? "Close"
+      : preset === "reset-login"
+        ? "Reset login"
+        : preset === "focus-split"
+          ? "Focus split"
+          : preset.charAt(0).toUpperCase() + preset.slice(1)
   return { host, bat, path: `C:\\layouts\\computer-${computer}\\${bat}`, label }
 }
 
@@ -208,6 +216,7 @@ function publishLayoutFile(host: string, computer: string, name: string) {
 function publishLayoutScript(host: string, computer: string) {
   publishLayoutFile(host, computer, "Show-Edge.ps1")
   publishLayoutFile(host, computer, "Edge-Custom.bat")
+  publishLayoutFile(host, computer, "Edge-Reset-Login.bat")
 }
 
 function publishCustomZones(host: string, computer: string, zones: ZoneSpec[]) {
@@ -397,7 +406,7 @@ function readPresetFile(file: string, allowed: string[]) {
 }
 
 function rememberLayout(computer: string, preset: string) {
-  if (preset === "close") return
+  if (preset === "close" || preset === "reset-login") return
   if (!storedAllowed(computer).includes(preset)) return
   writePresetFile(layoutStateFile(computer), preset)
 }
@@ -442,7 +451,7 @@ export async function launchLayout(computer: string, preset: string): Promise<La
     const known = (watcherReadyUntil.get(command.host) ?? 0) > Date.now() && watcherIsCurrent(command.host)
     if (known) void watcherFresh(command.host).catch(() => watcherReadyUntil.delete(command.host))
     else await ensureWatcher(command.host, user, password)
-    if (preset !== "close") {
+    if (preset !== "close" && preset !== "reset-login") {
       const close = layoutCommand(computer, "close")
       if (!close) return { ok: false, message: "That preset is not on these screens." }
       const ticket = queueLaunch(command.host, close.path)
@@ -450,10 +459,19 @@ export async function launchLayout(computer: string, preset: string): Promise<La
       if (!closed) return { ok: false, message: `Edge on ${command.host} did not close.` }
       await new Promise((resolve) => setTimeout(resolve, 700))
     }
-    queueLaunch(command.host, command.path)
-    if (preset !== "close") rememberLayout(computer, preset)
+    const ticket = queueLaunch(command.host, command.path)
+    if (preset === "reset-login") {
+      const cleared = await waitUntilGone(ticket, 45000)
+      if (!cleared) return { ok: false, message: `C-Connect login on ${command.host} did not clear.` }
+    }
+    if (preset !== "close" && preset !== "reset-login") rememberLayout(computer, preset)
     const where = SCREEN_RANGES[computer] ?? "these screens"
-    const message = command.label === "Close" ? `Closed Edge on ${where}.` : `Opened ${command.label} on ${where}.`
+    const message =
+      command.label === "Close"
+        ? `Closed Edge on ${where}.`
+        : command.label === "Reset login"
+          ? `Cleared C-Connect login on ${where}. Open a preset and sign in with your account.`
+          : `Opened ${command.label} on ${where}.`
     return { ok: true, message }
   } catch (error) {
     const failed = error as { code?: string; stdout?: string; stderr?: string; message?: string }
