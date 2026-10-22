@@ -5,7 +5,8 @@
 param(
     [ValidateSet("Independent", "Full", "Custom")]
     [string]$Preset,
-    [switch]$Close
+    [switch]$Close,
+    [switch]$ResetLogin
 )
 
 $ErrorActionPreference = "Stop"
@@ -327,10 +328,19 @@ function Set-Taskbar([bool]$Visible) {
         if ($tray -ne [IntPtr]::Zero) { [void][PanelWin]::ShowWindow($tray, $(if ($Visible) { 5 } else { 0 })) }
     }
 }
-if ($Close) {
+if ($Close -or $ResetLogin) {
     Close-RecordedWindows $hwndFile
     Stop-HostProcess $hostPidFile
+    Stop-LayoutEdge $root
     Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    if ($ResetLogin) {
+        Start-Sleep -Milliseconds 400
+        foreach ($folder in @($edgeData, (Join-Path $root "edge-profiles"))) {
+            if (Test-Path -LiteralPath $folder) {
+                Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
     Set-Taskbar $true
     Stop-LayoutConsoles
     exit 0

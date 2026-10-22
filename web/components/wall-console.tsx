@@ -696,6 +696,39 @@ export function WallConsole() {
     await closeComputers(["101", "102", "103"], "Closed Edge on every screen.")
   }
 
+  async function clearCConnectLogin() {
+    if (layoutBusy.current) return
+    layoutBusy.current = true
+    setLayoutStatus("Clearing the shared C-Connect login on every screen…")
+    try {
+      const results = await Promise.all(
+        (["101", "102", "103"] as const).map(async (computer) => {
+          const response = await fetch("/api/layout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ computer, preset: "reset-login" }),
+          })
+          const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null
+          return { computer, ok: response.ok, text: body?.message || body?.error || "The login did not clear." }
+        }),
+      )
+      const failed = results.filter((item) => !item.ok)
+      if (failed.length === 0) {
+        setApplied({ 1: "", 2: "" })
+        setComputer3Applied("")
+        setPreset({ 1: "", 2: "" })
+        setComputer3Preset("")
+        setLayoutStatus("Cleared C-Connect login on every screen. Open a preset and sign in with your account.")
+      } else {
+        setLayoutStatus(failed.map((item) => item.text).join(" "))
+      }
+    } catch {
+      setLayoutStatus("Could not reach the layout service.")
+    } finally {
+      layoutBusy.current = false
+    }
+  }
+
   async function closeSelectedEdge() {
     if (selection.screen === "every") {
       await closeAllEdge()
@@ -1876,6 +1909,9 @@ export function WallConsole() {
           onCloseAll={() => {
             void closeAllEdge()
           }}
+          onClearLogin={() => {
+            void clearCConnectLogin()
+          }}
         />
         </div>
         {presetCoachPresence.mounted && presetCoach ? (
@@ -2760,6 +2796,7 @@ function PresetRow({
   onRefresh,
   onClose,
   onCloseAll,
+  onClearLogin,
 }: {
   label: string
   rows: Screen[][]
@@ -2775,6 +2812,7 @@ function PresetRow({
   onRefresh: () => void
   onClose: () => void
   onCloseAll: () => void
+  onClearLogin: () => void
 }) {
   return (
     <div>
@@ -2802,6 +2840,9 @@ function PresetRow({
           </GlowButton>
           <GlowButton tone="alert" onClick={onCloseAll}>
             Close all
+          </GlowButton>
+          <GlowButton tone="alert" onClick={onClearLogin}>
+            Clear login
           </GlowButton>
         </div>
       </div>
