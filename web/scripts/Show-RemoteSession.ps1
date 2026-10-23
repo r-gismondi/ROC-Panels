@@ -547,6 +547,7 @@ $script:panelOpen = $false
 $script:lastSurfaceFocus = [datetime]::MinValue
 $script:keyboardShown = $false
 $script:keyboardAuto = $false
+$script:keyboardOpenedAt = [datetime]::MinValue
 $script:keysHot = $false
 $script:fieldLast = $null
 $script:lastFieldAction = [datetime]::MinValue
@@ -672,6 +673,7 @@ function Start-Session {
     $script:lastSurfaceFocus = [datetime]::MinValue
     $script:fieldLast = $null
     $script:lastFieldAction = [datetime]::MinValue
+    $script:keyboardOpenedAt = [datetime]::MinValue
     [RemoteField]::Watch($(if ($script:Computer) { "\\$($script:Computer)\c$\layouts\type-field.txt" } else { "" }))
     $start = New-Object System.Diagnostics.ProcessStartInfo
     $start.FileName = $edge
@@ -841,25 +843,37 @@ function Close-TouchKeyboard([string]$Reason) {
 
 # A keyboard raised for a text field lowers again when that field loses focus; one opened with the button stays.
 # Focus raises the session over the X, keyboard and Home buttons until the next tick, so it is only used when the session is behind.
+# Toggle is not open-only: calling it again while the pane is still reporting closed closes a keyboard that just rose.
 function Open-TouchKeyboard([string]$Reason, [switch]$ForField) {
     $script:keyboardAuto = [bool]$ForField
     if ([TouchKeyboard]::IsShowing()) {
         $script:keyboardShown = $true
+        $script:keyboardOpenedAt = Get-Date
         $keys.Invalidate()
         return
     }
     if (-not [RemoteWin]::IsForeground($script:hwnd)) { [RemoteWin]::Focus($script:hwnd) }
     [void](Set-SurfaceFocus $Reason)
     [TouchKeyboard]::StartHost()
-    $deadline = (Get-Date).AddSeconds(2)
+    # Focusing the remote Desktop field or starting TabTip can raise the keyboard on its own.
+    $deadline = (Get-Date).AddMilliseconds(800)
     while ((Get-Date) -lt $deadline -and -not [TouchKeyboard]::IsShowing()) {
-        if ([TouchKeyboard]::Toggle($script:hwnd)) {
-            Start-Sleep -Milliseconds 250
-        } else {
-            Start-Sleep -Milliseconds 150
+        Start-Sleep -Milliseconds 50
+    }
+    if (-not [TouchKeyboard]::IsShowing()) {
+        if (-not [TouchKeyboard]::Toggle($script:hwnd)) {
+            $script:keyboardShown = $false
+            $keys.Invalidate()
+            Write-Log "The touch keyboard did not open."
+            return
+        }
+        $deadline = (Get-Date).AddSeconds(2)
+        while ((Get-Date) -lt $deadline -and -not [TouchKeyboard]::IsShowing()) {
+            Start-Sleep -Milliseconds 50
         }
     }
     $script:keyboardShown = [TouchKeyboard]::IsShowing()
+    if ($script:keyboardShown) { $script:keyboardOpenedAt = Get-Date }
     $keys.Invalidate()
     Write-Log $(if ($script:keyboardShown) { "Raised the touch keyboard ($Reason)." } else { "The touch keyboard did not open." })
 }
@@ -884,16 +898,20 @@ function Update-RemoteField {
     }
     $state = [RemoteField]::State
     if ($state -eq $script:fieldLast) { return }
-    # A state that arrives this soon after the last raise or lower waits, so quick focus hops cannot toggle the keyboard back and forth.
-    if (((Get-Date) - $script:lastFieldAction).TotalMilliseconds -lt 1000) { return }
-    $script:fieldLast = $state
+    # Off waits longer than on so brief focus hops while the keyboard is up cannot slam it down and back up.
+    $cooldownMs = if ($state -like 'off *') { 1500 } else { 800 }
+    if (((Get-Date) - $script:lastFieldAction).TotalMilliseconds -lt $cooldownMs) { return }
     if ($state -like 'on *') {
         if (-not [RemoteWin]::IsForeground($script:hwnd)) { return }
+        $script:fieldLast = $state
         $script:lastFieldAction = Get-Date
         Open-TouchKeyboard "text field" -ForField
     } elseif ($state -like 'off *' -and $script:keyboardAuto -and $script:keyboardShown) {
+        $script:fieldLast = $state
         $script:lastFieldAction = Get-Date
         Close-TouchKeyboard "text field left"
+    } else {
+        $script:fieldLast = $state
     }
 }
 
@@ -912,6 +930,8 @@ function Update-BarColor {
 function Update-KeyboardState {
     if (-not $script:keyboardShown) { return }
     if ([TouchKeyboard]::IsShowing()) { return }
+    # Right after a raise, IsShowing can briefly report closed while the pane is still settling.
+    if ($script:keyboardOpenedAt -ne [datetime]::MinValue -and ((Get-Date) - $script:keyboardOpenedAt).TotalMilliseconds -lt 1500) { return }
     $script:keyboardShown = $false
     $script:keyboardAuto = $false
     $keys.Invalidate()

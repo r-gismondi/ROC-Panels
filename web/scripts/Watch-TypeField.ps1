@@ -220,7 +220,7 @@ while ($true) {
                 Set-FieldState "on"
                 Write-Log "A text field took focus: $([FieldFocus]::Label) in $owner."
             }
-        } elseif ($settled -ge 300) {
+        } elseif ($settled -ge 450) {
             $script:handled = $changed
             if ($script:typing) {
                 $script:typing = $false
