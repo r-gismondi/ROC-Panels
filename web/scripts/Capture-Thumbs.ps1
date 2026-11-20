@@ -15,10 +15,16 @@ if (-not ("ThumbDpi" -as [type])) {
 using System.Runtime.InteropServices;
 public static class ThumbDpi {
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
 }
 "@
 }
 [void][ThumbDpi]::SetProcessDPIAware()
+# Tile numbers assume 1920x1080 monitors; CopyFromScreen takes physical pixels of the real monitor size.
+$LayoutX = [ThumbDpi]::GetSystemMetrics(0) / 1920.0
+$LayoutY = [ThumbDpi]::GetSystemMetrics(1) / 1080.0
+function Sx([double]$Value) { [int][Math]::Round($Value * $LayoutX) }
+function Sy([double]$Value) { [int][Math]::Round($Value * $LayoutY) }
 
 function Get-WallComputer {
     $ips = @([System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) | Where-Object { $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork } | ForEach-Object { $_.ToString() })
@@ -69,11 +75,15 @@ function Save-Tile($tile) {
     $scaled = $null
     $params = $null
     try {
-        $src = New-Object System.Drawing.Bitmap ([int]$tile.W), ([int]$tile.H)
+        $x = Sx $tile.X
+        $y = Sy $tile.Y
+        $w = (Sx ($tile.X + $tile.W)) - $x
+        $h = (Sy ($tile.Y + $tile.H)) - $y
+        $src = New-Object System.Drawing.Bitmap $w, $h
         $graphics = [System.Drawing.Graphics]::FromImage($src)
-        $graphics.CopyFromScreen([int]$tile.X, [int]$tile.Y, 0, 0, (New-Object System.Drawing.Size ([int]$tile.W), ([int]$tile.H)))
+        $graphics.CopyFromScreen($x, $y, 0, 0, (New-Object System.Drawing.Size $w, $h))
         $thumbW = 240
-        $thumbH = [Math]::Max(1, [int]($tile.H * $thumbW / $tile.W))
+        $thumbH = [Math]::Max(1, [int]($h * $thumbW / $w))
         $thumb = New-Object System.Drawing.Bitmap $thumbW, $thumbH
         $scaled = [System.Drawing.Graphics]::FromImage($thumb)
         $scaled.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBilinear
@@ -95,7 +105,12 @@ function Save-Tile($tile) {
     }
 }
 
+$self = $MyInvocation.MyCommand.Path
+$selfStamp = (Get-Item -LiteralPath $self).LastWriteTimeUtc
 while ($true) {
+    # The console restarts this loop once alive.txt goes stale, so a newer copy takes over.
+    $current = Get-Item -LiteralPath $self -ErrorAction SilentlyContinue
+    if (-not $current -or $current.LastWriteTimeUtc -ne $selfStamp) { break }
     Set-Content -LiteralPath (Join-Path $dir "alive.txt") -Value (Get-Date).ToString("o") -Encoding Ascii
     foreach ($tile in $tiles[$computer]) { Save-Tile $tile }
     Start-Sleep -Milliseconds 1500

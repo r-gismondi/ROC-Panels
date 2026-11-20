@@ -477,6 +477,14 @@ public class GhostForm : Form {
 [void][RemoteWin]::SetProcessDPIAware()
 $screen = [System.Windows.Forms.Screen]::PrimaryScreen
 $bounds = $screen.Bounds
+# Sizes below are 100%-scale pixels; bounds and UI Automation rects are physical pixels.
+$uiScale = 1.0
+try {
+    $dpiProbe = [System.Drawing.Graphics]::FromHwnd([IntPtr]::Zero)
+    $uiScale = $dpiProbe.DpiX / 96.0
+    $dpiProbe.Dispose()
+} catch {}
+function Px([double]$Value) { [int][Math]::Round($Value * $uiScale) }
 
 $edge = $null
 foreach ($candidate in @(
@@ -988,9 +996,9 @@ function Update-SessionControls {
     }
 
     $win = [RemoteWin]::Rect($script:hwnd)
-    $band = $win[1] + [Math]::Max(96, [int]($win[3] * 0.12))
+    $band = $win[1] + [Math]::Max((Px 96), [int]($win[3] * 0.12))
     $closers = @($rows | Where-Object {
-        $_.Type -eq 'Button' -and -not $_.Rect.IsEmpty -and $_.Rect.Width -gt 0 -and $_.Rect.Width -le 160 -and
+        $_.Type -eq 'Button' -and -not $_.Rect.IsEmpty -and $_.Rect.Width -gt 0 -and $_.Rect.Width -le (Px 160) -and
         $_.Rect.Top -lt $band -and $_.Name -notmatch 'disconnect' -and
         $_.Name.Trim() -ne 'Close' -and
         $_.Name -match '^\s*(close|hide|dismiss|collapse)\b|^\s*[xX\u00D7\u2715\u2716]\s*$'
@@ -999,8 +1007,8 @@ function Update-SessionControls {
         $rect = $closers[0].Rect
         if (-not $script:barX -or [Math]::Abs($script:barX.Left - $rect.Left) -gt 2 -or [Math]::Abs($script:barX.Top - $rect.Top) -gt 2) {
             $script:barX = $rect
-            $side = [Math]::Max([Math]::Max($rect.Width, $rect.Height) + 8, 40)
-            try { $script:barColor = Get-ScreenColor ([int]($rect.Left + $rect.Width / 2 - $side / 2 - 4)) ([int]($rect.Top + $rect.Height / 2)) } catch {}
+            $side = [Math]::Max([Math]::Max($rect.Width, $rect.Height) + (Px 8), (Px 40))
+            try { $script:barColor = Get-ScreenColor ([int]($rect.Left + $rect.Width / 2 - $side / 2 - (Px 4))) ([int]($rect.Top + $rect.Height / 2)) } catch {}
             $form.Invalidate()
             $keys.Invalidate()
             Write-Log "Bar X: '$($closers[0].Name)' at $([int]$rect.Left),$([int]$rect.Top) $([int]$rect.Width)x$([int]$rect.Height)"
@@ -1016,7 +1024,7 @@ function Test-FullName([string]$Name, [switch]$Exit) {
 }
 
 function Test-OnScreen($rect) {
-    if ($null -eq $rect -or $rect.IsEmpty -or $rect.Width -lt 8 -or $rect.Height -lt 8) { return $false }
+    if ($null -eq $rect -or $rect.IsEmpty -or $rect.Width -lt (Px 8) -or $rect.Height -lt (Px 8)) { return $false }
     return $rect.Left -lt $bounds.Right -and $rect.Right -gt $bounds.Left -and $rect.Top -lt $bounds.Bottom -and $rect.Bottom -gt $bounds.Top
 }
 
@@ -1034,18 +1042,18 @@ function Find-MenuHandle {
         $kinds | ForEach-Object { [System.Windows.Automation.PropertyCondition]::new($AE::ControlTypeProperty, $_) }
     )
     $found = $page.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.OrCondition]::new($conditions))
-    $right = $bounds.Right - 140
+    $right = $bounds.Right - (Px 140)
     $mid = $bounds.Top + ($bounds.Height / 2)
     $best = $null
     $bestDist = [double]::MaxValue
     foreach ($element in $found) {
         $rect = $element.Current.BoundingRectangle
-        if ($rect.IsEmpty -or $rect.Width -lt 8 -or $rect.Width -gt 96 -or $rect.Height -lt 8 -or $rect.Height -gt 180) { continue }
-        if ($rect.Left -lt $right -or $rect.Right -gt $bounds.Right + 8 -or $rect.Top -lt $bounds.Top -or $rect.Bottom -gt $bounds.Bottom) { continue }
+        if ($rect.IsEmpty -or $rect.Width -lt (Px 8) -or $rect.Width -gt (Px 96) -or $rect.Height -lt (Px 8) -or $rect.Height -gt (Px 180)) { continue }
+        if ($rect.Left -lt $right -or $rect.Right -gt $bounds.Right + (Px 8) -or $rect.Top -lt $bounds.Top -or $rect.Bottom -gt $bounds.Bottom) { continue }
         $name = [string]$element.Current.Name
         if ($name -match 'disconnect|full[\s-]*screen|hide tabs|close') { continue }
         $dist = [Math]::Abs(($rect.Top + $rect.Height / 2) - $mid)
-        if ($name -match 'option|menu|arrow|chevron|expand|panel|show|open') { $dist -= 800 }
+        if ($name -match 'option|menu|arrow|chevron|expand|panel|show|open') { $dist -= Px 800 }
         if ($dist -lt $bestDist) { $bestDist = $dist; $best = $rect }
     }
     return $best
@@ -1059,7 +1067,7 @@ function Open-SessionMenu {
         Write-Log "Opened the session menu."
         return
     }
-    Invoke-ScreenClickAt ($bounds.Right - 12) ([int]($bounds.Top + $bounds.Height / 2))
+    Invoke-ScreenClickAt ($bounds.Right - (Px 12)) ([int]($bounds.Top + $bounds.Height / 2))
     Write-Log "Opened the session menu from the screen edge."
 }
 
@@ -1122,9 +1130,9 @@ function Update-CloseButton {
     $win = [RemoteWin]::Rect($script:hwnd)
     $script:ghost = $false
     if ($script:visualFull) {
-        $w = $h = 40
-        $x = $bounds.Right - $w - 12
-        $y = $bounds.Top + 12
+        $w = $h = Px 40
+        $x = $bounds.Right - $w - (Px 12)
+        $y = $bounds.Top + (Px 12)
     } elseif ($script:barX) {
         # Lie invisibly over the tab bar X, so its own X shows and the click disconnects.
         $rect = $script:barX
@@ -1134,7 +1142,7 @@ function Update-CloseButton {
         $w = [int][Math]::Ceiling($rect.Right) - $x
         $h = [int][Math]::Ceiling($rect.Bottom) - $y
     } else {
-        $w = $h = 48
+        $w = $h = Px 48
         $x = $win[0] + $win[2] - $w
         $y = $win[1]
     }
@@ -1142,7 +1150,7 @@ function Update-CloseButton {
         $form.Bounds = New-Object System.Drawing.Rectangle $x, $y, $w, $h
         $form.Invalidate()
     }
-    $keysX = $x - $w - $(if ($script:ghost) { 0 } else { 8 })
+    $keysX = $x - $w - $(if ($script:ghost) { 0 } else { Px 8 })
     if ($keys.Left -ne $keysX -or $keys.Top -ne $y -or $keys.Width -ne $w -or $keys.Height -ne $h) {
         $keys.Bounds = New-Object System.Drawing.Rectangle $keysX, $y, $w, $h
         $keys.Invalidate()
@@ -1251,7 +1259,7 @@ $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
 $form.Text = "Disconnect remote desktop"
 $form.BackColor = $barBlack
 $form.Opacity = 0
-$form.Bounds = New-Object System.Drawing.Rectangle ($bounds.Right - 48), $bounds.Top, 48, 48
+$form.Bounds = New-Object System.Drawing.Rectangle ($bounds.Right - (Px 48)), $bounds.Top, (Px 48), (Px 48)
 $form.Cursor = [System.Windows.Forms.Cursors]::Hand
 $form.Add_Paint({
     param($sender, $e)
@@ -1282,7 +1290,7 @@ $keys.TopMost = $true
 $keys.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
 $keys.Text = "Touch keyboard"
 $keys.BackColor = $barBlack
-$keys.Bounds = New-Object System.Drawing.Rectangle ($bounds.Right - 96), $bounds.Top, 48, 48
+$keys.Bounds = New-Object System.Drawing.Rectangle ($bounds.Right - (Px 96)), $bounds.Top, (Px 48), (Px 48)
 $keys.Cursor = [System.Windows.Forms.Cursors]::Hand
 $keys.Add_Paint({
     param($sender, $e)

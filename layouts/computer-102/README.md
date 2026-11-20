@@ -2,7 +2,7 @@
 
 Copy this folder to `C:\layouts\computer-102` on computer 2 (`192.168.0.102`) and double-click a preset there. The windows have to open on that computer's desktop.
 
-Display 1 must be the left monitor (HDMI 1) and display 2 the right monitor (HDMI 2). Both are 1920×1080, landscape, 100% scale, with the tops aligned. These are the same layouts as computer 1. TV13 and TV18 are on computer 3 and are not opened here.
+Display 1 must be the left monitor (HDMI 1) and display 2 the right monitor (HDMI 2). Both are landscape with the tops aligned. The panels are 3840×2160 at 200% scale. The layout numbers in the scripts assume 1920×1080 monitors and are stretched to the real monitor size when a preset opens, so any resolution and scale works as long as both monitors match. These are the same layouts as computer 1. TV13 and TV18 are on computer 3 and are not opened here.
 
 | File | What you should see on computer 2 |
 |---|---|

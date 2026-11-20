@@ -2,7 +2,7 @@
 
 Copy the `layouts` folder to `C:\layouts` on this computer, so these files live in `C:\layouts\computer-101`. Double-click a preset there. The windows have to open on this computer's desktop.
 
-Display 1 must be the left monitor (HDMI 1) and display 2 the right monitor (HDMI 2). Both are 1920×1080, landscape, 100% scale, with the tops aligned.
+Display 1 must be the left monitor (HDMI 1) and display 2 the right monitor (HDMI 2). Both are landscape with the tops aligned. The panels are 3840×2160 at 200% scale. The layout numbers in the scripts assume 1920×1080 monitors and are stretched to the real monitor size when a preset opens, so any resolution and scale works as long as both monitors match.
 
 | HDMI 1 | HDMI 2 |
 |---|---|
