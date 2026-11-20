@@ -1,6 +1,7 @@
 # Places labeled test windows on computer 192.168.0.101.
 # Display 1 is the left monitor and display 2 is the right monitor.
-# Each is 1920x1080, landscape, 100% scale, tops aligned.
+# Each is landscape, tops aligned, at the same Windows display scale.
+# Positions below assume 1920x1080 monitors and are stretched to the real monitor size.
 #
 # HDMI 1 (display 1)          HDMI 2 (display 2)
 # TV1  0,0     960x540        TV3  1920,0    960x540
@@ -27,9 +28,15 @@ using System.Runtime.InteropServices;
 public static class Panel2Dpi {
     [DllImport("user32.dll")]
     public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")]
+    public static extern int GetSystemMetrics(int index);
 }
 "@
 [void][Panel2Dpi]::SetProcessDPIAware()
+$LayoutX = [Panel2Dpi]::GetSystemMetrics(0) / 1920.0
+$LayoutY = [Panel2Dpi]::GetSystemMetrics(1) / 1080.0
+function Sx([double]$Value) { [int][Math]::Round($Value * $LayoutX) }
+function Sy([double]$Value) { [int][Math]::Round($Value * $LayoutY) }
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
@@ -44,7 +51,7 @@ if (Test-Path $pidFile) {
 Set-Content -Path $pidFile -Value $PID
 
 function Zone($title, $x, $y, $w, $h, $color) {
-    [pscustomobject]@{ Title = $title; X = $x; Y = $y; W = $w; H = $h; Color = $color }
+    [pscustomobject]@{ Title = $title; X = (Sx $x); Y = (Sy $y); W = (Sx ($x + $w)) - (Sx $x); H = (Sy ($y + $h)) - (Sy $y); Color = $color }
 }
 
 $presets = @{

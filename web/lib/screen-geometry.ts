@@ -1,5 +1,6 @@
 export type ZoneSpec = { title: string; x: number; y: number; w: number; h: number }
 
+// Layout units assume 1920x1080 monitors. Show-Edge.ps1 stretches them to the wall PC's real monitor size.
 const SCREEN_RECTS: Record<string, { x: number; y: number; w: number; h: number }> = {
   TV1: { x: 0, y: 0, w: 960, h: 540 },
   TV2: { x: 960, y: 0, w: 960, h: 540 },

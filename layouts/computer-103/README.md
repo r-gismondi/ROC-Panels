@@ -1,6 +1,6 @@
 # Layouts for 192.168.0.103
 
-Copy this folder to `C:\layouts\computer-103` on computer 3 (`192.168.0.103`) and double-click a preset there. HDMI 1 (TV13) is the top monitor and HDMI 2 (TV18) is the monitor directly below it. Both are 1920×1080, landscape, 100% scale.
+Copy this folder to `C:\layouts\computer-103` on computer 3 (`192.168.0.103`) and double-click a preset there. HDMI 1 (TV13) is the top monitor and HDMI 2 (TV18) is the monitor directly below it. Both are landscape. The panels are 3840×2160 at 200% scale. The layout numbers in the scripts assume 1920×1080 monitors and are stretched to the real monitor size when a preset opens, so any resolution and scale works as long as both monitors match.
 
 | File | What you should see |
 |---|---|

@@ -13,7 +13,7 @@ $HomeUrl = "https://ccv2.mtllc.us/landing"
 $LayoutScreens = @("TV9", "TV10", "TV11", "TV12", "TV14", "TV15", "TV16", "TV17")
 
 if (-not ("PanelWin" -as [type])) {
-    $panelDll = "C:\layouts\PanelWin2.dll"
+    $panelDll = "C:\layouts\PanelWin4.dll"
     if (-not (Test-Path -LiteralPath $panelDll)) {
         Add-Type -OutputAssembly $panelDll -TypeDefinition @"
 using System;
@@ -22,6 +22,12 @@ public struct PanelRect { public int Left; public int Top; public int Right; pub
 public struct PanelPoint { public int X; public int Y; }
 public static class PanelWin {
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] static extern uint GetDpiForSystem();
+    [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
+    public static double Scale() { return GetDpiForSystem() / 96.0; }
+    public static int ScreenWidth() { return GetSystemMetrics(0); }
+    public static int ScreenHeight() { return GetSystemMetrics(1); }
+    static int Px(int value) { return (int)Math.Round(value * Scale()); }
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)] public static extern int SetWindowTheme(IntPtr hwnd, string subApp, string subId);
@@ -153,7 +159,7 @@ public static class PanelWin {
         }
         int left, top, right, bottom;
         Measure(hwnd, out left, out top, out right, out bottom);
-        if (top < 40) top = 48;
+        if (top < Px(40)) top = Px(48);
         int childW = w + left + right;
         int childH = h + top + bottom;
         SetWindowRgn(host, IntPtr.Zero, false);
@@ -178,6 +184,14 @@ public static class PanelWin {
     Add-Type -Path $panelDll
 }
 [void][PanelWin]::SetProcessDPIAware()
+# Zone numbers assume 1920x1080 monitors and are stretched to the real monitor size in physical pixels.
+# Edge window flags and CDP bounds are DIPs, so physical values are divided by the display scale for them.
+$LayoutX = [PanelWin]::ScreenWidth() / 1920.0
+$LayoutY = [PanelWin]::ScreenHeight() / 1080.0
+$Scale = [PanelWin]::Scale()
+function Sx([double]$Value) { [int][Math]::Round($Value * $LayoutX) }
+function Sy([double]$Value) { [int][Math]::Round($Value * $LayoutY) }
+function Dip([double]$Value) { [int][Math]::Round($Value / $Scale) }
 
 function Find-Edge {
     foreach ($candidate in @(
@@ -372,7 +386,7 @@ Start-Sleep -Milliseconds 200
 Set-Taskbar $false
 
 function Zone($title, $x, $y, $w, $h) {
-    [pscustomobject]@{ Title = $title; X = $x; Y = $y; W = $w; H = $h }
+    [pscustomobject]@{ Title = $title; X = (Sx $x); Y = (Sy $y); W = (Sx ($x + $w)) - (Sx $x); H = (Sy ($y + $h)) - (Sy $y) }
 }
 
 $presets = @{
@@ -427,12 +441,12 @@ foreach ($existing in @(Get-EdgeHwnds)) { $known[$existing.ToInt64()] = $true }
 foreach ($zone in $activeZones) {
     $drawW = $zone.W
     $drawH = $zone.H
-    if (($zone.X + $zone.W) -lt 3840) { $drawW += 2 }
+    if (($zone.X + $zone.W) -lt (Sx 3840)) { $drawW += Sx 2 }
     Write-Output "Opening $($zone.Title)"
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $edge
     $zoneUrl = Get-ZoneUrl $zone.Title
-    $startInfo.Arguments = Get-EdgeLaunchArgs "--window-position=$($zone.X),$($zone.Y) --window-size=$drawW,$drawH --app=`"$zoneUrl`" --new-window"
+    $startInfo.Arguments = Get-EdgeLaunchArgs "--window-position=$(Dip $zone.X),$(Dip $zone.Y) --window-size=$(Dip $drawW),$(Dip $drawH) --app=`"$zoneUrl`" --new-window"
     $startInfo.UseShellExecute = $false
     $started = New-Object System.Diagnostics.Process
     $started.StartInfo = $startInfo
@@ -694,10 +708,10 @@ function Invoke-Cdp($Socket, [int]$Id, [string]$Method, $Params) {
 function Find-ZonePage($Hwnd) {
     $text = [PanelWin]::RectOf($Hwnd)
     if ($text -notmatch '^(-?\d+),(-?\d+)\s+(\d+)x(\d+)$') { return $null }
-    $left = [int]$Matches[1]
-    $top = [int]$Matches[2]
-    $width = [int]$Matches[3]
-    $height = [int]$Matches[4]
+    $left = Dip $Matches[1]
+    $top = Dip $Matches[2]
+    $width = Dip $Matches[3]
+    $height = Dip $Matches[4]
     try {
         $version = Invoke-RestMethod -Uri 'http://127.0.0.1:9333/json/version' -TimeoutSec 2
         $list = @(Invoke-RestMethod -Uri 'http://127.0.0.1:9333/json/list' -TimeoutSec 2)
